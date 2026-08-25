@@ -5,7 +5,7 @@ nav_order: 3
 
 # Usage
 
-Discord Sync CLI has two front doors that drive the same machinery: an **interactive TUI** for picking and syncing channels by hand, and a **scriptable CLI** for automation. Both maintain the same two files — [`sync-config.json` and `exports-state.json`](configuration.md) — so you can mix them freely.
+Discord Sync CLI has two front doors that drive the same machinery: an **interactive TUI** for picking and syncing channels by hand, and a **scriptable CLI** for automation. Both maintain the same file — [`discord-sync.json`](configuration.md) — so you can mix them freely.
 
 ## The interactive TUI
 
@@ -27,14 +27,14 @@ The TUI opens a full-screen browser over every server the token can see. Keys:
 
 Markers, in the TUI and in the `servers`/`channels` listings:
 
-- `✓` — synced (present in `exports-state.json`)
-- `◇` — selected in `sync-config.json`, but not yet synced
+- `✓` — synced (present in the `state` section of `discord-sync.json`)
+- `◇` — selected (in the `guilds` section of `discord-sync.json`), but not yet synced
 
 ### Watching a sync
 
-Pressing `s` or `S` switches to a **live syncing view** inside the TUI: a per-channel checklist (`○` pending, `▸` running, `✓` done, `✗` failed) above a scrolling log that streams the pipeline's own output — including DiscordChatExporter and docker progress. Channels are synced one at a time; the `✓`/`◇` markers update as each finishes. When the run completes, the footer shows a summary and **any key returns you to browsing**. Because syncing needs to pass the token through to docker, the TUI requires `DISCORD_TOKEN` to be set in the environment (not only `--token`/`.env`).
+Pressing `s` or `S` switches to a **live syncing view** inside the TUI: a per-channel checklist (`○` pending, `▸` running, `✓` done, `✗` failed) above a scrolling log that streams the pipeline's own output — including DiscordChatExporter and docker progress. Channels are synced one at a time; the `✓`/`◇` markers update as each finishes. When the run completes, the footer shows a summary and **any key returns you to browsing**. The token is threaded through to docker for you, so it only needs to be resolvable the usual way (`--token`, `DISCORD_TOKEN`, or `.env`) — a bare `DISCORD_TOKEN` environment variable is not required.
 
-Selections are written to `sync-config.json` immediately as you toggle them. Options: `--token <TOKEN>`, `--state <FILE>` (default `exports-state.json`), `--config <FILE>` (default `sync-config.json`).
+Your selections are written to `discord-sync.json` immediately as you toggle them. Options: `--token <TOKEN>`, `--config <FILE>` (default `discord-sync.json`).
 
 ## The scriptable CLI
 
@@ -49,7 +49,7 @@ discord-sync sync-all                         # sync everything selected
 
 ### `servers` — list servers
 
-Lists every server the token can see, with the `✓`/`◇` markers. Options: `--token`, `--json`, `--state`, `--config`.
+Lists every server the token can see, with the `✓`/`◇` markers. Options: `--token`, `--json`, `--config`.
 
 ### `channels` — list a server's channels
 
@@ -57,7 +57,7 @@ Lists every server the token can see, with the `✓`/`◇` markers. Options: `--
 discord-sync channels -g <GUILD_ID>
 ```
 
-Lists the **exportable** channels (text, announcement, forum, media) of one server with their kind and category. Options: `-g/--guild <ID>` (required), `--token`, `--json`, `--state`, `--config`.
+Lists the **exportable** channels (text, announcement, forum, media) of one server with their kind and category. Options: `-g/--guild <ID>` (required), `--token`, `--json`, `--config`.
 
 ### `select` / `deselect` — choose what to sync
 
@@ -68,7 +68,7 @@ discord-sync deselect -g <GUILD_ID> -c <CHANNEL_ID>
 discord-sync deselect -g <GUILD_ID> --all
 ```
 
-Adds channels to (or removes them from) `sync-config.json`. Selecting resolves names via the Discord API and assigns each channel a directory: the one already recorded in `exports-state.json` if the channel was synced before, otherwise a slug of the channel name (`Canvas Showcase!` → `canvas-showcase/`). Options: `-g/--guild <ID>` (required), `-c/--channel <ID>` (repeatable) or `--all`, `--token`, `--state`, `--config`.
+Adds channels to (or removes them from) the `guilds` section of `discord-sync.json`. Selecting resolves names via the Discord API and assigns each channel a directory: the one already recorded in `state` if the channel was synced before, otherwise a slug of the channel name (`Canvas Showcase!` → `canvas-showcase/`). Options: `-g/--guild <ID>` (required), `-c/--channel <ID>` (repeatable) or `--all`, `--token`, `--config`.
 
 ### `sync` — one channel, end to end
 
@@ -77,34 +77,35 @@ discord-sync sync -c <CHANNEL_ID>                          # known channel
 discord-sync sync -c <NEW_ID> -o mydir --name my-channel   # first time
 ```
 
-Runs the full pipeline for one channel (see below). For a channel already in `exports-state.json`, the directory and name are read from the state; for a brand-new channel, pass `-o` (and ideally `--name`).
+Runs the full pipeline for one channel (see below). For a channel already recorded in the `state` section of `discord-sync.json`, the directory and name are read from that state; for a brand-new channel, pass `-o` (and ideally `--name`).
 
-| Option               | Description                                                        |
-| -------------------- | ------------------------------------------------------------------ |
-| `-c, --channel <ID>` | Channel ID (required)                                              |
-| `-o, --out <DIR>`    | Output directory (required for channels not yet in the state file) |
-| `--name <NAME>`      | Human-readable channel name recorded in the state                  |
-| `--full`             | Force a full re-export instead of an incremental one               |
-| `--skip-assets`      | Skip the asset download step                                       |
-| `--state <FILE>`     | State file (default `exports-state.json`)                          |
+| Option               | Description                                                   |
+| -------------------- | ------------------------------------------------------------- |
+| `-c, --channel <ID>` | Channel ID (required)                                         |
+| `-o, --out <DIR>`    | Output directory (required for channels not yet in the state) |
+| `--name <NAME>`      | Human-readable channel name recorded in the state             |
+| `--full`             | Force a full re-export instead of an incremental one          |
+| `--skip-assets`      | Skip the asset download step                                  |
+| `--token <TOKEN>`    | Discord token                                                 |
+| `--config <FILE>`    | Project file (default `discord-sync.json`)                    |
 
 ### `sync-all` — everything selected
 
 ```bash
-discord-sync sync-all                # every channel in sync-config.json
+discord-sync sync-all                # every channel selected in discord-sync.json
 discord-sync sync-all -g <GUILD_ID>  # one server only
 discord-sync sync-all --full         # force full re-exports
 ```
 
-Syncs every channel chosen in `sync-config.json`, one at a time; a failing channel is reported and skipped, not fatal. Options: `-g/--guild <ID>`, `--full`, `--skip-assets`, `--state <FILE>`, `--config <FILE>`.
+Syncs every channel chosen in the `guilds` section of `discord-sync.json`, one at a time; a failing channel is reported and skipped, not fatal. Options: `-g/--guild <ID>`, `--full`, `--skip-assets`, `--token <TOKEN>`, `--config <FILE>`.
 
 ## The sync pipeline
 
 Every sync (from the TUI queue, `sync`, or `sync-all`) runs the same steps in order:
 
-1. **Export** — via the DiscordChatExporter docker image. For a channel already in `exports-state.json` this is **incremental**: only messages after the last recorded message ID are fetched, into a temporary `_since-<date>/` folder. Unknown channels (or `--full`) get a full export.
+1. **Export** — via the DiscordChatExporter docker image. For a channel already recorded in the `state` section of `discord-sync.json` this is **incremental**: only messages after the last recorded message ID are fetched, into a temporary `_since-<date>/` folder. Unknown channels (or `--full`) get a full export.
 2. **Merge delta** — incremental messages are folded into the master export files: deduplicated by message ID, sorted by timestamp, brand-new threads adopted wholesale, and the delta folder removed.
-3. **Update state** — `exports-state.json` is rebuilt from the export files on disk and validated; a sync that would corrupt the state fails instead.
+3. **Update state** — the `state` section of `discord-sync.json` is rebuilt from the export files on disk and validated; a sync that would corrupt the state fails instead. Only `state` is rewritten — `settings` and `guilds` are left untouched.
 4. **Download assets** — attachments, embeds, and stickers into `_assets/` (skipped with `--skip-assets`).
 5. **Generate HTML + Markdown** — the `html/` and `md/` renditions are regenerated.
 
@@ -159,12 +160,12 @@ By default the export is **chunked** into date windows (derived from the channel
 | `--media`             | off                                 | Let DiscordChatExporter download media itself                                                                                 |
 | `--flat`              | off                                 | Single pass, no chunking                                                                                                      |
 | `--since-state`       | off                                 | Incremental: export after the state's `lastMessageId` (implies `--flat`; writes to `<dir>/_since-<date>/` for known channels) |
-| `--state <FILE>`      | `exports-state.json`                | State file used by `--since-state`                                                                                            |
+| `--config <FILE>`     | `discord-sync.json`                 | Project file whose `state` cursor `--since-state` reads                                                                       |
 | `--image <IMAGE>`     | `tyrrrz/discordchatexporter:stable` | Docker image                                                                                                                  |
 | `--force`             | off                                 | Re-export chunks already marked `.done`                                                                                       |
 | `--dry-run`           | off                                 | Print the docker commands without running them                                                                                |
 
-### `update-state` — rebuild the state file
+### `update-state` — rebuild the state section
 
 ```bash
 discord-sync update-state <DIR> [<DIR> ...]
@@ -172,7 +173,7 @@ discord-sync update-state <DIR> --name canvas-showcase
 discord-sync update-state                # rescan every export directory
 ```
 
-Rebuilds `exports-state.json` from the export files in the given directories (every export directory in the working directory when none are given). Options: `--state <FILE>`, `--name <NAME>`, `--channel <ID>`.
+Rebuilds the `state` section of `discord-sync.json` from the export files in the given directories (every export directory in the working directory when none are given). Only `state` is rewritten — `settings` and `guilds` are preserved. Options: `--config <FILE>`, `--name <NAME>`, `--channel <ID>`.
 
 ### `merge` — fold a delta into the master exports
 
@@ -200,12 +201,12 @@ discord-sync md <DIR> [<DIR> ...]
 
 Regenerate `<DIR>/html/` and `<DIR>/md/` from the JSON exports and the asset manifest. Both are safe to rerun at any time: the HTML Explored state lives in the browser, and the Markdown `explore` frontmatter is preserved from the existing files.
 
-### `validate` — check the state file
+### `validate` — check the project file
 
 ```bash
-discord-sync validate                     # exports-state.json
-discord-sync validate path/to/state.json
-discord-sync validate --emit-json-schema  # regenerate exports-state.schema.json
+discord-sync validate                     # discord-sync.json
+discord-sync validate path/to/discord-sync.json
+discord-sync validate --emit-json-schema  # regenerate discord-sync.schema.json
 ```
 
-Validates the state file against the zod schema, plus semantic checks (e.g. that recorded directories exist). Exits non-zero when invalid.
+Validates `discord-sync.json` against the zod schema, plus semantic checks (e.g. that recorded directories exist). Exits non-zero when invalid.

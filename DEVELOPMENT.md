@@ -97,13 +97,13 @@ This compiles `src/cli.ts` into a standalone, minified `discord-sync` binary (wi
 | `bun run tui`                     | Interactive browser: pick servers/channels, select, queue syncs           |
 | `bun run servers`                 | List servers the token can see                                            |
 | `bun run sync`                    | Full pipeline for one channel (export → merge → state → assets → html+md) |
-| `bun run sync-all`                | Sync every channel chosen in `sync-config.json`                           |
+| `bun run sync-all`                | Sync every channel selected in `discord-sync.json`                        |
 | `bun run export`                  | Run DiscordChatExporter (chunked, flat, or `--since-state`)               |
-| `bun run update-state`            | Rebuild `exports-state.json` from export directories                      |
+| `bun run update-state`            | Rebuild the `state` section of `discord-sync.json` from export dirs       |
 | `bun run merge`                   | Fold an incremental `_since-*` delta into the master exports              |
 | `bun run assets`                  | Download attachments/embeds/stickers into `<dir>/_assets/`                |
 | `bun run html` / `md`             | Regenerate the HTML pages / Markdown files                                |
-| `bun run validate-state`          | Validate `exports-state.json` against the zod schema                      |
+| `bun run validate-state`          | Validate `discord-sync.json` against the zod schema                       |
 | `bun run tsc` / `tsc:watch`       | Type check (once / watch mode; `tscw` is an alias)                        |
 | `bun run test` / `test:watch`     | Run tests (once / watch mode)                                             |
 | `bun run lint` / `lint:fix`       | Run ESLint / auto-fix                                                     |
@@ -154,6 +154,6 @@ Watch it with `gh run watch`.
 
 ### State validation fails
 
-- `bun run validate-state` reports schema violations in `exports-state.json`
-- Never hand-edit `exports-state.json`; rebuild it with `bun run update-state`
+- `bun run validate-state` reports schema violations in `discord-sync.json`
+- Never hand-edit the `state` section of `discord-sync.json`; rebuild it with `bun run update-state` (that rewrites only `state`, leaving `settings` and `guilds` intact)
 - After changing `src/lib/schema.ts`, regenerate the JSON schema: `bun run src/commands/validate-state.ts --emit-json-schema`

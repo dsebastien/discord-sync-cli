@@ -124,7 +124,7 @@ git push origin feature/your-feature-name
 - Keep PRs focused on a single change
 - Ensure all CI checks pass (audit, type check, tests, format check, build)
 - Add or update tests (`src/lib/*.test.ts`) for new functionality
-- Never hand-edit generated content (`exports-state.json`, `exports-state.schema.json`, archive output directories)
+- Never hand-edit generated content (the `state` section of `discord-sync.json`, `discord-sync.schema.json`, archive output directories)
 - Update documentation if behavior or commands change
 - Be responsive to feedback and review comments
 

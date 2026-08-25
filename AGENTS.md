@@ -4,26 +4,26 @@
 
 > Read this first. It orients you in **this** codebase; the generic guidance follows below.
 
-**What it is.** A CLI/TUI for exporting/synchronizing Discord servers/channels/threads to JSON, HTML & Markdown. Exports run through the `tyrrrz/discordchatexporter:stable` docker image; the tool tracks what has been synced in `exports-state.json`, downloads referenced assets, and regenerates HTML and Markdown renditions. Repo: <https://github.com/dsebastien/discord-sync-cli>. The compiled binary is `discord-sync` (built via `bun build --compile`).
+**What it is.** A CLI/TUI for exporting/synchronizing Discord servers/channels/threads to JSON, HTML & Markdown. Exports run through the `tyrrrz/discordchatexporter:stable` docker image; the tool tracks what has been synced in the `state` section of `discord-sync.json`, downloads referenced assets, and regenerates HTML and Markdown renditions. Repo: <https://github.com/dsebastien/discord-sync-cli>. The compiled binary is `discord-sync` (built via `bun build --compile`).
 
 **Start here.**
 
 - `src/cli.ts` — entrypoint and the authoritative command list + help strings.
 - `src/commands/sync-channel.ts` — the full pipeline for one channel (export → merge delta → update state → download assets → regenerate HTML + Markdown).
-- `src/lib/schema.ts` — zod schemas; the source of truth for `exports-state.json`.
+- `src/lib/schema.ts` — zod schemas; the source of truth for `discord-sync.json`.
 
 **How the code is shaped.**
 
 - `src/cli.ts` dispatches subcommands: `tui`, `servers`, `channels`, `select`, `deselect`, `sync-all`, `sync`, `export`, `update-state`, `merge`, `assets`, `html`, `md`, `validate`.
 - `src/commands/*.ts` — one file per command. Each exports `main(args: string[])` for the CLI plus, usually, a library function other commands compose (`syncOne`, `exportChannel`, `mergeDeltaDir`, `updateState`, `downloadAssets`, `generateHtml`, `generateMarkdown`, `validateStateFile`). Put orchestration here, not in `lib/`.
 - `src/lib/*.ts` — pure shared modules, tested through their interface: `core.ts` (snowflake/chunk math), `state.ts`, `assets.ts`, `render-html.ts`, `render-md.ts`, `merge.ts`, `schema.ts`, `sync-config.ts`, `discord-api.ts` (minimal REST client), `fs.ts`, `types.ts`. Tests live next to them as `*.test.ts` (bun:test, 56 tests).
-- Two data files at the root: `sync-config.json` (what SHOULD be synced — per guild/channel with its output directory; managed by `select`/`deselect`/`tui`) and `exports-state.json` (what HAS been synced; validated by `discord-sync validate`).
+- One project file at the root, `discord-sync.json`, with three sections: `settings` (hand-edited tuning knobs — asset/export delays and Markdown `frontmatter`), `guilds` (what SHOULD be synced — per guild/channel with its output directory; managed by `select`/`deselect`/`tui`), and `state` (what HAS been synced; auto-managed by `update-state`, which rewrites only `state`). The whole document is validated by `discord-sync validate`.
 
 **Conventions specific to this repo.**
 
 - **Snowflake IDs exceed 2^53 — never compare them as numbers.** Use `compareSnowflakes` in `src/lib/core.ts`, which orders as `[digit-count, string]`. Converting to `Number` silently corrupts IDs.
 - **Discord CDN URLs are signed with expiring query params** (`ex=`/`is=`/`hm=`). The asset manifest keys on `urlKey(url)` (scheme+host+path only, `src/lib/assets.ts`) — never make the query string part of an asset's identity.
-- **Generated outputs are committed but must never be hand-edited**: the channel archive directories (e.g. `canvas/`, `bases/`) and their `html/`, `md/`, `_assets/` subdirectories, plus `exports-state.json`. Regenerate via the CLI. `exports-state.schema.json` is generated too — regenerate it with `bun run src/commands/validate-state.ts --emit-json-schema`; the zod schema in `src/lib/schema.ts` is the source of truth.
+- **Generated outputs are committed but must never be hand-edited**: the channel archive directories (e.g. `canvas/`, `bases/`) and their `html/`, `md/`, `_assets/` subdirectories, plus the `state` section of `discord-sync.json` (rebuilt by `update-state`; `settings` and `guilds` in the same file are hand-edited). Regenerate via the CLI. `discord-sync.schema.json` is generated too — regenerate it with `bun run src/commands/validate-state.ts --emit-json-schema`; the zod schema in `src/lib/schema.ts` is the source of truth.
 - **Markdown regeneration preserves curation**: `render-md.ts` reads the `explore:` frontmatter flag out of an existing file before rewriting it. Keep that behavior when touching Markdown generation.
 - **Token**: `--token` flag > `DISCORD_TOKEN` env > `.env` in cwd (`resolveToken` in `src/lib/discord-api.ts` — compiled binaries do not auto-load `.env`, so it is parsed explicitly). **Discord ToS warning**: automating a user token risks account termination; bot tokens are the safe path.
 - **Rate limits**: DiscordChatExporter is invoked with `--respect-rate-limits` and `--parallel 1`. Do not "optimize" these away; chunking exists for resumability, not speed.
@@ -45,7 +45,7 @@ A change is only "done" when **all** of the following hold:
 - `bun run format` has been run and `bun run format:check` passes.
 - `bun run build` completes without errors (the compiled binary is a release artifact).
 - `bun run validate` (tsc + tests + lint + format check) is green.
-- If the state shape changed: `src/lib/schema.ts` updated, `exports-state.schema.json` regenerated.
+- If the project-file shape changed: `src/lib/schema.ts` updated, `discord-sync.schema.json` regenerated.
 
 Anything that talks to the live Discord API or docker cannot be fully self-verified offline. Say explicitly when a change needs a manual run (e.g. `bun run cli sync -c <ID>`) and what to check.
 
@@ -61,11 +61,11 @@ Anything that talks to the live Discord API or docker cannot be fully self-verif
 
 **NEVER modify by hand** unless explicitly instructed:
 
-- `exports-state.json`, `exports-state.schema.json` — generated/managed by the CLI.
+- The `state` section of `discord-sync.json`, and `discord-sync.schema.json` — generated/managed by the CLI.
 - Channel archive directories (`canvas/`, `bases/`, …) including `html/`, `md/`, `_assets/` — generated output.
 - `dist/` — build output. `node_modules/` — read-only.
 
-`sync-config.json` is user intent — edit it through `select`/`deselect`/`tui`, or by hand only when asked.
+The `settings` and `guilds` sections of `discord-sync.json` are user intent — edit `guilds` through `select`/`deselect`/`tui` (or by hand when asked), and `settings` by hand.
 
 ## Environment & tooling
 
@@ -157,7 +157,7 @@ Keep tests pure: `src/lib/` modules must stay testable without docker, the netwo
 - `src/cli.ts` stays small: command table + dispatch only. Feature logic goes in `src/commands/`, pure logic in `src/lib/`.
 - New command = new file in `src/commands/` exporting `main(args)`, registered in the `COMMANDS` table in `src/cli.ts` with a one-line help string.
 - Never commit build artifacts (`dist/`, `node_modules/` — both gitignored).
-- `.prettierignore` excludes generated content (`canvas/`, `bases/`, `exports-state.json`, `exports-state.schema.json`, `CHANGELOG.md`) — do not format those.
+- `.prettierignore` excludes generated content (the archive directories under `/*/`, `discord-sync.json`, `discord-sync.schema.json`, `discord-sync.json.lock`, `CHANGELOG.md`) — do not format those.
 
 ## Code style
 
