@@ -4,7 +4,7 @@
  *
  * Exports a channel via the tyrrrz/discordchatexporter docker image, either
  * in date-bounded chunks with pauses in between, in one flat pass, or
- * incrementally from the last message recorded in exports-state.json.
+ * incrementally from the last message recorded in discord-sync.json.
  * Chunked runs mark each window .done, so reruns resume instead of redoing.
  *
  *   bun run export-channel.ts -c 1234567890

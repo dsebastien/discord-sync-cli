@@ -1,4 +1,4 @@
-/** Building exports-state.json from DiscordChatExporter output. */
+/** Building the discord-sync.json state from DiscordChatExporter output. */
 
 import { compareSnowflakes } from './core'
 import { renameSync } from 'node:fs'

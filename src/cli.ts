@@ -46,7 +46,7 @@ const COMMANDS: Record<string, { run: (args: string[]) => Promise<void>; help: s
     },
     'update-state': {
         run: updateState,
-        help: 'rebuild exports-state.json from export directories'
+        help: 'rebuild the state section of discord-sync.json from export dirs'
     },
     'merge': {
         run: mergeExports,

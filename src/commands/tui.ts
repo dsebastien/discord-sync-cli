@@ -11,7 +11,7 @@
  *
  * Markers: ✓ synced · ◇ selected, not yet synced
  *
- * The TUI edits sync-config.json as you toggle. Pressing s/S switches to a
+ * The TUI edits discord-sync.json as you toggle. Pressing s/S switches to a
  * live "syncing" view that runs the pipeline in place: a per-channel
  * checklist plus a scrolling log fed by the pipeline's own output (docker /
  * DiscordChatExporter progress included). Press a key when it finishes to
