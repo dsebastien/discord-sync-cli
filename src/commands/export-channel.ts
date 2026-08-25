@@ -94,6 +94,8 @@ export async function exportChannel(
 ): Promise<{ done: number; skipped: number; failed: number }> {
     if (!isSnowflake(opts.channel))
         throw new Error(`--channel must be a numeric ID, got: ${opts.channel}`)
+    // Docker --volume requires an absolute host path; callers may pass relative dirs.
+    opts = { ...opts, outDir: resolve(opts.outDir) }
 
     let work: Work[]
     if (opts.flat) {
