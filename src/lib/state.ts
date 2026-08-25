@@ -1,7 +1,7 @@
 /** Building exports-state.json from DiscordChatExporter output. */
 
 import { compareSnowflakes } from './core'
-import { existsSync, renameSync } from 'node:fs'
+import { renameSync } from 'node:fs'
 import type { ChannelState, DceExport, DiscordSyncDoc, ThreadState } from './types'
 import { DEFAULT_SETTINGS, DiscordSyncSchema } from './schema'
 
@@ -136,38 +136,13 @@ export function emptyDoc(): DiscordSyncDoc {
     }
 }
 
-/** Build a unified doc from the pre-1.0 split files, if present. */
-async function migrateLegacy(): Promise<DiscordSyncDoc | null> {
-    const stateFile = Bun.file('exports-state.json')
-    const configFile = Bun.file('sync-config.json')
-    const hasState = await stateFile.exists()
-    const hasConfig = await configFile.exists()
-    if (!hasState && !hasConfig) return null
-
-    const doc = emptyDoc()
-    if (hasState) {
-        const legacy = (await stateFile.json()) as { channels?: Record<string, ChannelState> }
-        doc.state.channels = legacy.channels ?? {}
-    }
-    if (hasConfig) {
-        const legacy = (await configFile.json()) as {
-            guilds?: DiscordSyncDoc['guilds']
-        }
-        doc.guilds = legacy.guilds ?? {}
-    }
-    return doc
-}
-
 /**
- * Load discord-sync.json, applying schema defaults. When it is absent, migrate
- * the legacy split files (exports-state.json + sync-config.json) if present,
- * otherwise return an empty doc. Throws on an invalid file.
+ * Load discord-sync.json, applying schema defaults. Returns an empty doc when
+ * the file is absent; throws on an invalid file.
  */
 export async function loadDoc(path = DEFAULT_CONFIG_PATH): Promise<DiscordSyncDoc> {
     const file = Bun.file(path)
-    if (!(await file.exists())) {
-        return (await migrateLegacy()) ?? emptyDoc()
-    }
+    if (!(await file.exists())) return emptyDoc()
     const parsed = DiscordSyncSchema.safeParse(await file.json())
     if (!parsed.success) {
         throw new Error(
@@ -190,9 +165,4 @@ export async function saveDoc(path: string, doc: DiscordSyncDoc): Promise<void> 
     const tmp = `${path}.tmp-${process.pid}`
     await Bun.write(tmp, JSON.stringify(doc, null, 2) + '\n')
     renameSync(tmp, path)
-}
-
-/** True when a legacy split-file layout still exists (for a migration hint). */
-export function hasLegacyFiles(): boolean {
-    return existsSync('exports-state.json') || existsSync('sync-config.json')
 }
