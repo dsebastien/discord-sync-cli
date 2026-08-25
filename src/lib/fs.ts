@@ -2,6 +2,7 @@
 
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { mergeMessages, threadIdOf } from './merge'
 import type { DceExport } from './types'
 
 const SKIP_PARTS = new Set(['_assets', 'html', 'md', '.git', 'node_modules'])
@@ -56,4 +57,54 @@ export function defaultRoots(cwd: string): string[] {
             }
         })
         .sort()
+}
+
+/** One rendered thread: its merged export plus a stable output basename. */
+export interface AggregatedThread {
+    threadId: string
+    data: DceExport
+    /** Basename (without extension) for the generated html/md file. */
+    slug: string
+}
+
+function threadSlug(threadId: string, data: DceExport): string {
+    const name = (data.channel?.name ?? 'thread')
+        .replace(/[^\w.-]+/g, '_')
+        .replace(/^[._]+|[._]+$/g, '')
+    return `${name || 'thread'} [${threadId}]`
+}
+
+/**
+ * Group every export file under `root` by thread ID and merge their messages
+ * (dedupe by message id, newest metadata wins). This makes partitioned masters
+ * and chunked exports render as one page per thread instead of overwriting
+ * each other by filename.
+ */
+export async function aggregateByThread(root: string): Promise<AggregatedThread[]> {
+    const byThread = new Map<string, DceExport>()
+    const orphans: { data: DceExport; path: string }[] = []
+    for (const file of exportFiles(root)) {
+        const data = await loadExport(file)
+        if (!data) continue
+        const tid = threadIdOf(file, data)
+        if (!tid) {
+            orphans.push({ data, path: file })
+            continue
+        }
+        const existing = byThread.get(tid)
+        byThread.set(tid, existing ? mergeMessages(existing, data).merged : data)
+    }
+    const out: AggregatedThread[] = []
+    for (const [threadId, data] of byThread) {
+        out.push({ threadId, data, slug: threadSlug(threadId, data) })
+    }
+    // Files without a resolvable thread id still render under their own name.
+    for (const { data, path } of orphans) {
+        const base = path
+            .split('/')
+            .pop()!
+            .replace(/\.json$/, '')
+        out.push({ threadId: base, data, slug: base })
+    }
+    return out
 }

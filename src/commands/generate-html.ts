@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { defaultRoots, exportFiles, loadExport } from '../lib/fs'
+import { aggregateByThread, defaultRoots } from '../lib/fs'
 import { indexPage, threadPage } from '../lib/render-html'
 import type { IndexEntry } from '../lib/render-html'
 import type { Manifest } from '../lib/types'
@@ -26,25 +26,20 @@ export async function generateHtml(root: string): Promise<number> {
     const htmlDir = join(root, 'html')
     const entries: IndexEntry[] = []
     let made = 0
-    for (const file of exportFiles(root)) {
-        const data = await loadExport(file)
-        if (!data) {
-            console.error(`warn: could not parse ${file}`)
-            continue
-        }
+    for (const { data, slug, threadId } of await aggregateByThread(root)) {
         mkdirSync(htmlDir, { recursive: true })
-        const outName = basename(file).replace(/\.json$/, '.html')
+        const outName = `${slug}.html`
         await Bun.write(join(htmlDir, outName), threadPage(data, manifest))
         made++
         const msgs = data.messages ?? []
         entries.push({
-            name: data.channel?.name ?? basename(file, '.json'),
+            name: data.channel?.name ?? slug,
             file: outName,
             count: msgs.length,
             last: msgs
                 .reduce((acc, m) => ((m.timestamp ?? '') > acc ? m.timestamp! : acc), '')
                 .slice(0, 10),
-            tid: data.channel?.id ?? ''
+            tid: data.channel?.id ?? threadId
         })
     }
     if (entries.length) {
