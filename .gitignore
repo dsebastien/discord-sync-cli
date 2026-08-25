@@ -9,6 +9,7 @@
 /discord-sync.json
 /discord-sync.json.lock
 /*.tmp-*
+*.staging-*
 
 
 # Every other top-level directory is exported Discord data (canvas/, bases/,

@@ -9,7 +9,7 @@ const SKIP_PARTS = new Set(['_assets', 'html', 'md', '.git', 'node_modules'])
 /** Transient incremental-delta directories must never be scanned as masters:
  * they hold partial data that would double-count or advance cursors wrongly. */
 function isSkipped(name: string): boolean {
-    return SKIP_PARTS.has(name) || name.startsWith('_since-')
+    return SKIP_PARTS.has(name) || name.startsWith('_since-') || name.includes('.staging-')
 }
 
 /** All export JSON files under a directory, skipping generated folders. */

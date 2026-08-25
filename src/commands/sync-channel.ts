@@ -11,7 +11,7 @@
  */
 
 import { parseArgs } from 'node:util'
-import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { exportChannel } from './export-channel'
 import { mergeDeltaDir, MergeError } from './merge-exports'
@@ -113,13 +113,25 @@ async function syncOneLocked(opts: SyncOptions, configFile: string): Promise<voi
         }
     } else {
         console.log('-- full export --')
+        // Export into a staging dir and swap in on success, so a mid-export
+        // failure never leaves the live archive partially replaced.
+        const staging = `${outDir}.staging-${process.pid}`
+        rmSync(staging, { recursive: true, force: true })
         const result = await exportChannel({
             ...common,
             channel: opts.channel,
-            outDir,
+            outDir: staging,
             flat: true
         })
-        if (result.failed > 0) throw new SyncError('export failed')
+        if (result.failed > 0) {
+            rmSync(staging, { recursive: true, force: true })
+            throw new SyncError('export failed')
+        }
+        mkdirSync(outDir, { recursive: true })
+        for (const f of readdirSync(staging)) {
+            if (f.endsWith('.json')) renameSync(join(staging, f), join(outDir, f))
+        }
+        rmSync(staging, { recursive: true, force: true })
     }
 
     console.log('-- updating state --')
