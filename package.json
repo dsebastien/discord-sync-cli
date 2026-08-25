@@ -74,5 +74,8 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/dsebastien/discord-sync-cli.git"
+    },
+    "overrides": {
+        "tmp": ">=0.2.6"
     }
 }
