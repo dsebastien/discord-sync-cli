@@ -61,8 +61,8 @@ describe('collectAssets', () => {
 
 describe('derivedName', () => {
     test('is stable for the same asset regardless of signature', async () => {
-        const a = await derivedName('https://cdn.test/x/pic.png?ex=1')
-        const b = await derivedName('https://cdn.test/x/pic.png?ex=2')
+        const a = await derivedName('https://cdn.discordapp.com/x/pic.png?ex=1')
+        const b = await derivedName('https://cdn.discordapp.com/x/pic.png?ex=2')
         expect(a).toBe(b)
         expect(a.endsWith('_pic.png')).toBe(true)
     })

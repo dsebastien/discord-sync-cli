@@ -5,6 +5,7 @@ import {
     localAsset,
     renderMarkdown,
     renderMessage,
+    safeUrl,
     threadPage
 } from './render-html'
 import type { DceMessage, Manifest } from './types'
@@ -116,5 +117,49 @@ describe('threadPage / indexPage', () => {
         expect(page.indexOf('new.html')).toBeLessThan(page.indexOf('old.html'))
         expect(page).toContain('exportState()')
         expect(page).toContain('data-thread-id="2"')
+    })
+})
+
+describe('safeUrl (XSS/protocol allowlist)', () => {
+    test('allows http(s) and local asset paths', () => {
+        expect(safeUrl('https://cdn.test/a.png')).toBe('https://cdn.test/a.png')
+        expect(safeUrl('../_assets/2_shot.png')).toBe('../_assets/2_shot.png')
+    })
+    test('drops dangerous schemes', () => {
+        expect(safeUrl('javascript:alert(1)')).toBeNull()
+        expect(safeUrl('data:text/html,<script>')).toBeNull()
+        expect(safeUrl('not a url')).toBeNull()
+    })
+})
+
+describe('angle-bracket URL linkification (#8)', () => {
+    test('does not swallow trailing markup into the href', () => {
+        const out = renderMarkdown('see <https://example.test/path>')
+        // The href must be exactly the URL — not swallow the trailing `>` entity.
+        expect(out).toContain('href="https://example.test/path"')
+        expect(out).not.toContain('&gt;</a>')
+        expect(out).not.toContain('path&gt')
+    })
+    test('a URL followed by a closing tag keeps a clean href', () => {
+        const out = renderMarkdown('x https://example.test/p</b>')
+        expect(out).toContain('href="https://example.test/p"')
+    })
+})
+
+describe('renderMessage escapes attacker-controlled attributes (#6)', () => {
+    test('an embed image URL with a quote cannot break out of the attribute', () => {
+        const html = renderMessage(
+            { id: '1', embeds: [{ image: { url: 'https://x.test/a.png" onerror="alert(1)' } }] },
+            {}
+        )
+        expect(html).not.toContain('onerror="alert(1)"')
+        expect(html).toContain('&quot;')
+    })
+    test('a javascript: embed title URL is not emitted as a link', () => {
+        const html = renderMessage(
+            { id: '1', embeds: [{ title: 'hi', url: 'javascript:alert(1)' }] },
+            {}
+        )
+        expect(html).not.toContain('href="javascript:')
     })
 })

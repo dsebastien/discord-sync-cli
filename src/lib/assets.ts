@@ -16,10 +16,28 @@ export const IMAGE_EXTS = new Set([
 /** Canonical manifest key: scheme+host+path. Discord signs its cdn URLs with
  * expiring query params (ex=/is=/hm=), so the query string must not be part
  * of the identity. */
+/** Discord CDN hosts whose query strings are volatile signed params (ex/is/hm)
+ * and must be dropped from the identity. Other hosts keep their full query. */
+function isDiscordCdnHost(host: string): boolean {
+    return (
+        host.endsWith('.discordapp.com') ||
+        host.endsWith('.discordapp.net') ||
+        host.endsWith('.discord.com') ||
+        host === 'discordapp.com' ||
+        host === 'discord.com' ||
+        host === 'cdn.discordapp.com'
+    )
+}
+
 export function urlKey(url: string): string {
     try {
         const u = new URL(url)
-        return `${u.protocol}//${u.host}${u.pathname}`
+        // On Discord CDN the query is an expiring signature -> key on path only.
+        // Elsewhere the query is meaningful (?id=alice vs ?id=bob) -> keep it.
+        if (isDiscordCdnHost(u.host)) {
+            return `${u.protocol}//${u.host}${u.pathname}`
+        }
+        return `${u.protocol}//${u.host}${u.pathname}${u.search}`
     } catch {
         return url
     }

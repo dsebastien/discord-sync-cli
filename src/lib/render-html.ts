@@ -18,27 +18,52 @@ export function localAsset(url: string, manifest: Manifest): string | null {
     return entry?.file ? `../_assets/${encodeURIComponent(entry.file)}` : null
 }
 
+/** Only http(s) and our own local asset paths are safe as hrefs/srcs; anything
+ * else (javascript:, data:, etc.) is dropped. Discord content is untrusted. */
+export function safeUrl(url: string): string | null {
+    if (url.startsWith('../_assets/')) return url
+    try {
+        const u = new URL(url)
+        return u.protocol === 'http:' || u.protocol === 'https:' ? url : null
+    } catch {
+        return null
+    }
+}
+
+/** A URL escaped for use inside a double-quoted HTML attribute. */
+function attr(url: string): string {
+    return escapeHtml(url)
+}
+
 const URL_RE = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g
 const FENCE_RE = /```(?:\w+\n|\n)?([\s\S]*?)```/g
 
+function emphasize(escaped: string): string {
+    return escaped
+        .replace(/`([^`\n]+)`/g, '<code class="bg-gray-100 rounded px-1">$1</code>')
+        .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+}
+
 function inline(text: string): string {
-    let out = escapeHtml(text)
-    out = out.replace(/`([^`\n]+)`/g, '<code class="bg-gray-100 rounded px-1">$1</code>')
-    out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    out = out.replace(URL_RE, (m) => {
-        // The text is already escaped, so a URL followed by markup would greedily
-        // swallow the entities; cut the match at the first escaped character.
-        const cut = Math.min(
-            ...['&lt;', '&gt;', '&quot;', '&#39;']
-                .map((ent) => m.indexOf(ent))
-                .filter((i) => i !== -1),
-            m.length
-        )
-        const url = m.slice(0, cut)
-        if (!url) return m
-        return `<a class="text-blue-700 underline break-all" href="${url}">${url}</a>${m.slice(cut)}`
-    })
-    return out
+    // Tokenize URLs on the RAW text first, so escaping never bleeds into the
+    // href (previously `<https://x>` produced an href ending in `&gt`).
+    const out: string[] = []
+    let pos = 0
+    for (const m of text.matchAll(URL_RE)) {
+        out.push(emphasize(escapeHtml(text.slice(pos, m.index))))
+        const raw = m[0]
+        const safe = safeUrl(raw)
+        if (safe) {
+            out.push(
+                `<a class="text-blue-700 underline break-all" href="${attr(safe)}">${escapeHtml(raw)}</a>`
+            )
+        } else {
+            out.push(escapeHtml(raw))
+        }
+        pos = m.index + raw.length
+    }
+    out.push(emphasize(escapeHtml(text.slice(pos))))
+    return out.join('')
 }
 
 /** Minimal, safe rendering: escape first, then code fences, inline code,
@@ -63,7 +88,7 @@ export function renderMessage(msg: DceMessage, manifest: Manifest, baseUrl = '')
     const ts = escapeHtml((msg.timestamp ?? '').slice(0, 16).replace('T', ' '))
     const mid = msg.id ?? ''
     const tsHtml = baseUrl
-        ? `<a class="hover:underline" href="${baseUrl}/${mid}" title="open in Discord">${ts} UTC</a>`
+        ? `<a class="hover:underline" href="${attr(`${baseUrl}/${mid}`)}" title="open in Discord">${ts} UTC</a>`
         : `${ts} UTC`
     const parts = [
         `<div class="mt-6" id="msg-${mid}">`,
@@ -78,15 +103,16 @@ export function renderMessage(msg: DceMessage, manifest: Manifest, baseUrl = '')
 
     for (const att of msg.attachments ?? []) {
         const url = att.url ?? ''
-        const href = localAsset(url, manifest) ?? url
+        const href = safeUrl(localAsset(url, manifest) ?? url)
         const name = escapeHtml(att.fileName ?? 'attachment')
+        if (!href) continue
         if (IMAGE_EXTS.has(extOf(url))) {
             parts.push(
-                `<a href="${href}"><img src="${href}" alt="${name}" loading="lazy" class="mt-2 rounded border border-gray-200 max-w-full"></a>`
+                `<a href="${attr(href)}"><img src="${attr(href)}" alt="${name}" loading="lazy" class="mt-2 rounded border border-gray-200 max-w-full"></a>`
             )
         } else {
             parts.push(
-                `<div class="mt-1"><a class="text-blue-700 underline" href="${href}">📎 ${name}</a></div>`
+                `<div class="mt-1"><a class="text-blue-700 underline" href="${attr(href)}">📎 ${name}</a></div>`
             )
         }
     }
@@ -95,7 +121,8 @@ export function renderMessage(msg: DceMessage, manifest: Manifest, baseUrl = '')
         const eparts: string[] = []
         if (emb.title) {
             let title = escapeHtml(emb.title)
-            if (emb.url) title = `<a class="underline" href="${escapeHtml(emb.url)}">${title}</a>`
+            const titleHref = emb.url ? safeUrl(emb.url) : null
+            if (titleHref) title = `<a class="underline" href="${attr(titleHref)}">${title}</a>`
             eparts.push(`<div class="font-bold">${title}</div>`)
         }
         if (emb.description) {
@@ -105,10 +132,10 @@ export function renderMessage(msg: DceMessage, manifest: Manifest, baseUrl = '')
         }
         for (const part of ['image', 'thumbnail'] as const) {
             const url = emb[part]?.url
-            if (url) {
-                const href = localAsset(url, manifest) ?? url
+            const href = url ? safeUrl(localAsset(url, manifest) ?? url) : null
+            if (href) {
                 eparts.push(
-                    `<a href="${href}"><img src="${href}" loading="lazy" class="mt-2 rounded max-w-full"></a>`
+                    `<a href="${attr(href)}"><img src="${attr(href)}" loading="lazy" class="mt-2 rounded max-w-full"></a>`
                 )
             }
         }
