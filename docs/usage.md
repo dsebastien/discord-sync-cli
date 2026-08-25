@@ -21,14 +21,18 @@ The TUI opens a full-screen browser over every server the token can see. Keys:
 | `⏎` or `l`         | Open the highlighted server and list its exportable channels                                       |
 | `esc` or `h`       | Back to the server list                                                                            |
 | `space`            | Select/deselect the highlighted channel — on a **server**, toggles **all** of its channels at once |
-| `s`                | Queue a sync of the highlighted item (a server queues all of its selected channels)                |
-| `S`                | Queue everything selected, across all servers                                                      |
-| `q`                | Quit — **queued syncs run after the screen closes**, so export output stays plain and scrollable   |
+| `s`                | Sync the highlighted item **now** (a server syncs all of its selected channels)                    |
+| `S`                | Sync everything selected, across all servers, **now**                                              |
+| `q`                | Quit                                                                                               |
 
 Markers, in the TUI and in the `servers`/`channels` listings:
 
 - `✓` — synced (present in `exports-state.json`)
 - `◇` — selected in `sync-config.json`, but not yet synced
+
+### Watching a sync
+
+Pressing `s` or `S` switches to a **live syncing view** inside the TUI: a per-channel checklist (`○` pending, `▸` running, `✓` done, `✗` failed) above a scrolling log that streams the pipeline's own output — including DiscordChatExporter and docker progress. Channels are synced one at a time; the `✓`/`◇` markers update as each finishes. When the run completes, the footer shows a summary and **any key returns you to browsing**. Because syncing needs to pass the token through to docker, the TUI requires `DISCORD_TOKEN` to be set in the environment (not only `--token`/`.env`).
 
 Selections are written to `sync-config.json` immediately as you toggle them. Options: `--token <TOKEN>`, `--state <FILE>` (default `exports-state.json`), `--config <FILE>` (default `sync-config.json`).
 

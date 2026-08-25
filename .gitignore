@@ -1,14 +1,19 @@
 # Dependencies & build output
-node_modules/
-dist/
+/node_modules/
+/dist/
 
 # Secrets
 .env
 
-# Exported Discord data & local sync state (personal content — never commit)
-canvas/
-bases/
-exports/
-_since-*/
-exports-state.json
-sync-config.json
+# Local sync state (personal — never commit to this public repo)
+/exports-state.json
+/sync-config.json
+
+# Every other top-level directory is exported Discord data (canvas/, bases/,
+# whatever channel dirs you create) or generated renditions. Allowlist only
+# the project's own directories so exports can never be committed by accident.
+/*/
+!/src/
+!/docs/
+!/scripts/
+!/.github/

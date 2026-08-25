@@ -58,10 +58,35 @@ Treat the token like a password: anyone who has it can act as the bot. If it lea
 
 For servers where you cannot invite a bot (e.g. large communities you don't manage), the only option is your own user token — with the ToS/termination risk described above. A user token gives **full access to your account**, so guard it accordingly. The usual retrieval method, as described in [DiscordChatExporter's guide](https://github.com/Tyrrrz/DiscordChatExporter/blob/master/.docs/Token-and-IDs.md):
 
+**From the Network tab:**
+
 1. Open Discord in a **browser** (not the desktop app) and log in.
 2. Open the browser developer tools (`F12` or `Ctrl+Shift+I`) and switch to the **Network** tab.
 3. Interact with Discord (e.g. click a channel) so requests appear, and click any request to `discord.com/api/...`.
 4. In the **Request Headers**, find `Authorization` — its value is your user token.
+
+**Or with a console snippet.** On an open `discord.com` tab, open the developer tools **Console** and run this — it pulls the token out of Discord's own module registry and copies it to your clipboard (`copy()` is a DevTools console helper):
+
+```js
+;(() => {
+    let token
+    window.webpackChunkdiscord_app.push([
+        [Symbol()],
+        {},
+        (req) => {
+            for (const m of Object.values(req.c)) {
+                if (m?.exports?.default?.getToken) token = m.exports.default.getToken()
+            }
+        }
+    ])
+    console.log(token)
+    copy(token)
+})()
+```
+
+> **You'll have to type `allow` first.** By default Discord blocks pasting into the console (a "self-XSS" protection): it shows a big red **"Stop!"** warning and, the first time, asks you to **type the word `allow` and press Enter** before it will accept a paste. Do that, then paste the snippet and run it. This safeguard exists because scammers talk people into pasting malicious code — so only ever paste snippets you understand, like this one, which just reads your own token.
+
+If Discord's internals have changed and the snippet errors, fall back to the Network-tab method above.
 
 Never share this token, never commit it, and consider any machine that stores it as holding your Discord credentials.
 

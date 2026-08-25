@@ -1,7 +1,13 @@
-node_modules/
-dist/
-canvas/
-bases/
-exports-state.json
+/node_modules/
+/dist/
 CHANGELOG.md
 exports-state.schema.json
+exports-state.json
+sync-config.json
+
+# Exported Discord data & generated renditions (never format these).
+/*/
+!/src/
+!/docs/
+!/scripts/
+!/.github/

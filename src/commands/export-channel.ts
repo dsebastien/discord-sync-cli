@@ -152,8 +152,30 @@ export async function exportChannel(
                 ok = true
                 break
             }
-            const proc = Bun.spawn(['docker', ...args], { stdout: 'inherit', stderr: 'inherit' })
-            if ((await proc.exited) === 0) {
+            // Piped (not inherited) so callers that capture console output —
+            // notably the TUI's sync log — see docker/DCE progress lines too.
+            const proc = Bun.spawn(['docker', ...args], { stdout: 'pipe', stderr: 'pipe' })
+            const forward = async (
+                stream: ReadableStream<Uint8Array>,
+                sink: (line: string) => void
+            ) => {
+                const decoder = new TextDecoder()
+                let buf = ''
+                for await (const chunk of stream) {
+                    buf += decoder.decode(chunk, { stream: true })
+                    const lines = buf.split(/\r\n|\n|\r/)
+                    buf = lines.pop() ?? ''
+                    for (const line of lines) if (line.trim()) sink(line)
+                }
+                if (buf.trim()) sink(buf)
+            }
+            const streams = Promise.all([
+                forward(proc.stdout, (l) => console.log(l)),
+                forward(proc.stderr, (l) => console.error(l))
+            ])
+            const code = await proc.exited
+            await streams
+            if (code === 0) {
                 ok = true
                 break
             }

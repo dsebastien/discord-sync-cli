@@ -6,13 +6,16 @@
  *
  * Keys: up/down or j/k move · enter/l open server · esc/h back
  *       space select/deselect channel (or every channel of a server)
- *       s queue sync of the highlighted item · S queue everything selected
- *       q quit (queued syncs run after the screen closes)
+ *       s sync the highlighted item now · S sync everything selected now
+ *       q quit
  *
  * Markers: ✓ synced · ◇ selected, not yet synced
  *
- * The TUI edits sync-config.json as you toggle. Queued syncs run AFTER the
- * alternate screen closes, so docker/export output stays plain and scrollable.
+ * The TUI edits sync-config.json as you toggle. Pressing s/S switches to a
+ * live "syncing" view that runs the pipeline in place: a per-channel
+ * checklist plus a scrolling log fed by the pipeline's own output (docker /
+ * DiscordChatExporter progress included). Press a key when it finishes to
+ * return to browsing.
  */
 
 import { parseArgs } from 'node:util'
@@ -41,25 +44,33 @@ const BOLD = `${ESC}[1m`
 const INV = `${ESC}[7m`
 const GREEN = `${ESC}[32m`
 const CYAN = `${ESC}[36m`
+const RED = `${ESC}[31m`
+const YELLOW = `${ESC}[33m`
 const RESET = `${ESC}[0m`
+
+type JobStatus = 'pending' | 'running' | 'done' | 'failed'
 
 interface Job {
     guild: Guild
     channel: { id: string; name: string; directory: string }
+    status: JobStatus
 }
 
 interface Ui {
-    pane: 'guilds' | 'channels'
+    pane: 'guilds' | 'channels' | 'syncing'
     guilds: Guild[]
     guildIdx: number
     channels: (Channel & { category: string | null })[]
     channelIdx: number
     channelCache: Map<string, (Channel & { category: string | null })[]>
     status: string
-    queue: Job[]
+    jobs: Job[]
+    log: string[]
+    syncDone: boolean
     state: ExportsState
     config: SyncConfig
     configPath: string
+    statePath: string
 }
 
 function rows(): number {
@@ -69,10 +80,25 @@ function cols(): number {
     return process.stdout.columns || 80
 }
 
+/** Truncate on VISIBLE width: ANSI escape sequences don't take columns. */
 function line(s: string): string {
     const width = cols()
-    // Rough truncation; markers and names are plain-width text.
-    return s.length > width ? s.slice(0, width - 1) + '…' : s
+    let visible = 0
+    let out = ''
+    for (let i = 0; i < s.length; i++) {
+        if (s[i] === ESC) {
+            const end = s.indexOf('m', i)
+            if (end !== -1) {
+                out += s.slice(i, end + 1)
+                i = end
+                continue
+            }
+        }
+        if (visible >= width - 1) return out + '…' + RESET
+        out += s[i]
+        visible++
+    }
+    return out
 }
 
 function glyph(mark: keyof typeof MARK_GLYPH): string {
@@ -84,7 +110,49 @@ function glyph(mark: keyof typeof MARK_GLYPH): string {
           : g
 }
 
+const JOB_GLYPH: Record<JobStatus, string> = {
+    pending: `${DIM}○${RESET}`,
+    running: `${YELLOW}▸${RESET}`,
+    done: `${GREEN}✓${RESET}`,
+    failed: `${RED}✗${RESET}`
+}
+
+function renderSyncing(ui: Ui): void {
+    const height = rows()
+    const out: string[] = []
+    const done = ui.jobs.filter((j) => j.status === 'done' || j.status === 'failed').length
+    out.push(`${BOLD}${line(`discord-sync · syncing ${done}/${ui.jobs.length}`)}${RESET}`)
+
+    // Checklist (capped so a huge queue still leaves room for the log).
+    const listCap = Math.min(ui.jobs.length, Math.max(3, Math.floor((height - 4) / 2)))
+    const runningIdx = ui.jobs.findIndex((j) => j.status === 'running')
+    const start = Math.max(0, Math.min(runningIdx - 1, ui.jobs.length - listCap))
+    for (let i = start; i < Math.min(ui.jobs.length, start + listCap); i++) {
+        const j = ui.jobs[i]!
+        out.push(line(` ${JOB_GLYPH[j.status]} ${j.guild.name} / ${j.channel.name}`))
+    }
+    out.push(line(`${DIM}${'─'.repeat(Math.max(1, cols()))}${RESET}`))
+
+    const logHeight = height - out.length - 1
+    const tail = ui.log.slice(-Math.max(0, logHeight))
+    for (const l of tail) out.push(line(`${DIM}${l}${RESET}`))
+    for (let i = tail.length; i < logHeight; i++) out.push('')
+
+    out.push(
+        line(
+            ui.syncDone
+                ? `${BOLD}${ui.status}${RESET} ${DIM}· press any key to return${RESET}`
+                : `${DIM}${ui.status}${RESET}`
+        )
+    )
+    process.stdout.write(CLEAR + out.join('\n'))
+}
+
 function render(ui: Ui): void {
+    if (ui.pane === 'syncing') {
+        renderSyncing(ui)
+        return
+    }
     const height = rows() - 4
     const out: string[] = []
     const title =
@@ -97,16 +165,14 @@ function render(ui: Ui): void {
         ui.pane === 'guilds'
             ? ui.guilds.map((g, i) => ({
                   key: i,
-                  text: `${glyph(guildMark(ui.state, ui.config, g.id))} ${g.name}`,
-                  plain: g.name
+                  text: `${glyph(guildMark(ui.state, ui.config, g.id))} ${g.name}`
               }))
             : ui.channels.map((c, i) => {
                   const guild = ui.guilds[ui.guildIdx]!
                   const cat = c.category ? `${DIM}${c.category} /${RESET} ` : ''
                   return {
                       key: i,
-                      text: `${glyph(channelMark(ui.state, ui.config, guild.id, c.id))} ${cat}${c.name} ${DIM}[${channelKind(c)}]${RESET}`,
-                      plain: c.name
+                      text: `${glyph(channelMark(ui.state, ui.config, guild.id, c.id))} ${cat}${c.name} ${DIM}[${channelKind(c)}]${RESET}`
                   }
               })
     const idx = ui.pane === 'guilds' ? ui.guildIdx : ui.channelIdx
@@ -117,8 +183,7 @@ function render(ui: Ui): void {
     }
     for (let i = items.length - top; i < height; i++) out.push('')
 
-    const queued = ui.queue.length ? ` · ${ui.queue.length} sync(s) queued` : ''
-    out.push(line(`${DIM}${ui.status}${queued}${RESET}`))
+    out.push(line(`${DIM}${ui.status}${RESET}`))
     out.push(
         line(
             `${DIM}↑↓/jk move · ⏎/l open · esc/h back · space select · s sync this · S sync selected · q quit${RESET}`
@@ -127,13 +192,13 @@ function render(ui: Ui): void {
     process.stdout.write(CLEAR + out.join('\n'))
 }
 
-function queueJob(ui: Ui, guild: Guild, id: string, name: string): void {
+function collectJob(ui: Ui, guild: Guild, id: string, name: string, into: Job[]): void {
     const directory =
         ui.state.channels[id]?.directory ??
         ui.config.guilds[guild.id]?.channels[id]?.directory ??
         slugify(name)
-    if (!ui.queue.some((j) => j.channel.id === id)) {
-        ui.queue.push({ guild, channel: { id, name, directory } })
+    if (!into.some((j) => j.channel.id === id)) {
+        into.push({ guild, channel: { id, name, directory }, status: 'pending' })
     }
 }
 
@@ -159,13 +224,72 @@ async function openGuild(ui: Ui): Promise<void> {
     if (!ui.channelCache.has(guild.id)) {
         ui.status = `loading channels of ${guild.name}...`
         render(ui)
-        const api = apiRef!
-        ui.channelCache.set(guild.id, await api.listChannels(guild.id))
+        ui.channelCache.set(guild.id, await apiRef!.listChannels(guild.id))
     }
     ui.channels = ui.channelCache.get(guild.id)!
     ui.channelIdx = 0
     ui.pane = 'channels'
     ui.status = `${ui.channels.length} exportable channel(s)`
+}
+
+/** Run the given jobs in the live syncing view, capturing the pipeline's
+ * console output into a scrolling log. Returns when every job is finished. */
+async function runSyncs(ui: Ui, jobs: Job[]): Promise<void> {
+    ui.jobs = jobs
+    ui.log = []
+    ui.syncDone = false
+    ui.pane = 'syncing'
+    ui.status = 'starting...'
+
+    // Redirect the pipeline's console output into the log pane. The renderer
+    // writes to stdout directly (not via console), so there is no recursion.
+    const origLog = console.log
+    const origErr = console.error
+    const capture = (...parts: unknown[]) => {
+        const text = parts.map((p) => (typeof p === 'string' ? p : String(p))).join(' ')
+        for (const l of text.split('\n')) ui.log.push(l)
+        if (ui.log.length > 500) ui.log.splice(0, ui.log.length - 500)
+        render(ui)
+    }
+    console.log = capture
+    console.error = capture
+
+    let failures = 0
+    try {
+        for (const job of jobs) {
+            job.status = 'running'
+            ui.status = `syncing ${job.channel.name}`
+            render(ui)
+            try {
+                await syncOne({
+                    channel: job.channel.id,
+                    out: job.channel.directory,
+                    name: job.channel.name,
+                    stateFile: ui.statePath
+                })
+                job.status = 'done'
+            } catch (e) {
+                job.status = 'failed'
+                failures++
+                capture(
+                    `FAILED ${job.channel.name}: ${e instanceof SyncError ? e.message : String(e)}`
+                )
+                if (!(e instanceof SyncError)) throw e
+            }
+            // Reload state so browsing markers reflect what was just synced.
+            ui.state = await loadState(ui.statePath)
+            render(ui)
+        }
+    } finally {
+        console.log = origLog
+        console.error = origErr
+    }
+
+    ui.syncDone = true
+    ui.status = failures
+        ? `done · ${failures} failed, ${jobs.length - failures} ok`
+        : `done · ${jobs.length} channel(s) synced`
+    render(ui)
 }
 
 let apiRef: DiscordApi | null = null
@@ -182,6 +306,12 @@ export async function main(args: string[]): Promise<void> {
     const token = await resolveToken(values.token)
     if (!token) {
         console.error('error: no token (use --token, DISCORD_TOKEN, or a .env file)')
+        process.exit(1)
+    }
+    if (!process.env['DISCORD_TOKEN']) {
+        console.error(
+            'error: syncing needs DISCORD_TOKEN in the environment (it is passed to docker); export it before running the TUI'
+        )
         process.exit(1)
     }
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -206,10 +336,13 @@ export async function main(args: string[]): Promise<void> {
         channelIdx: 0,
         channelCache: new Map(),
         status: `${guilds.length} server(s)`,
-        queue: [],
+        jobs: [],
+        log: [],
+        syncDone: false,
         state,
         config,
-        configPath: values.config
+        configPath: values.config,
+        statePath: values.state
     }
 
     process.stdout.write(ALT_ON)
@@ -229,6 +362,18 @@ export async function main(args: string[]): Promise<void> {
     try {
         for await (const chunk of process.stdin) {
             const key = chunk.toString()
+
+            // The syncing view is modal: any key after completion returns to
+            // browsing; keys during a sync are ignored.
+            if (ui.pane === 'syncing') {
+                if (ui.syncDone) {
+                    ui.pane = 'guilds'
+                    ui.status = `${ui.guilds.length} server(s)`
+                    render(ui)
+                }
+                continue
+            }
+
             const list = ui.pane === 'guilds' ? ui.guilds : ui.channels
             const move = (d: number) => {
                 if (ui.pane === 'guilds') {
@@ -238,9 +383,7 @@ export async function main(args: string[]): Promise<void> {
                 }
             }
 
-            if (key === 'q' || key === `${ESC}` || (key === `${ESC}` && ui.pane === 'guilds')) {
-                if (key === 'q' || ui.pane === 'guilds') break
-            }
+            if (key === 'q' || (key === `${ESC}` && ui.pane === 'guilds')) break
             if (key === `${ESC}[A` || key === 'k') move(-1)
             else if (key === `${ESC}[B` || key === 'j') move(1)
             else if (key === `${ESC}[5~`) move(-10)
@@ -281,27 +424,29 @@ export async function main(args: string[]): Promise<void> {
                 }
             } else if (key === 's') {
                 const guild = ui.guilds[ui.guildIdx]!
+                const jobs: Job[] = []
                 if (ui.pane === 'channels') {
                     const ch = ui.channels[ui.channelIdx]
-                    if (ch) {
-                        queueJob(ui, guild, ch.id, ch.name)
-                        ui.status = `queued ${ch.name}`
-                    }
+                    if (ch) collectJob(ui, guild, ch.id, ch.name, jobs)
                 } else {
-                    const selected = Object.entries(ui.config.guilds[guild.id]?.channels ?? {})
-                    for (const [id, ch] of selected) queueJob(ui, guild, id, ch.name)
-                    ui.status = selected.length
-                        ? `queued ${selected.length} channel(s) of ${guild.name}`
-                        : `nothing selected in ${guild.name} (space to select)`
+                    for (const [id, ch] of Object.entries(
+                        ui.config.guilds[guild.id]?.channels ?? {}
+                    )) {
+                        collectJob(ui, guild, id, ch.name, jobs)
+                    }
                 }
+                if (jobs.length) await runSyncs(ui, jobs)
+                else ui.status = `nothing to sync here (space to select first)`
             } else if (key === 'S') {
+                const jobs: Job[] = []
                 for (const [gid, g] of Object.entries(ui.config.guilds)) {
                     const guild = ui.guilds.find((x) => x.id === gid) ?? { id: gid, name: g.name }
                     for (const [id, ch] of Object.entries(g.channels)) {
-                        queueJob(ui, guild, id, ch.name)
+                        collectJob(ui, guild, id, ch.name, jobs)
                     }
                 }
-                ui.status = `queued everything selected (${ui.queue.length} total)`
+                if (jobs.length) await runSyncs(ui, jobs)
+                else ui.status = 'nothing selected anywhere (space to select first)'
             } else if (list.length === 0) {
                 ui.status = 'empty'
             }
@@ -309,33 +454,6 @@ export async function main(args: string[]): Promise<void> {
         }
     } finally {
         cleanup()
-    }
-
-    if (!ui.queue.length) return
-    console.log(`running ${ui.queue.length} queued sync(s)\n`)
-    const failures: string[] = []
-    for (const [i, job] of ui.queue.entries()) {
-        console.log(`[${i + 1}/${ui.queue.length}] ${job.guild.name} / ${job.channel.name}`)
-        try {
-            await syncOne({
-                channel: job.channel.id,
-                out: job.channel.directory,
-                name: job.channel.name,
-                stateFile: values.state
-            })
-        } catch (e) {
-            if (e instanceof SyncError) {
-                console.error(`FAILED ${job.channel.name}: ${e.message} - continuing`)
-                failures.push(job.channel.name)
-            } else {
-                throw e
-            }
-        }
-        console.log('')
-    }
-    if (failures.length) {
-        console.error(`done with ${failures.length} failure(s): ${failures.join(', ')}`)
-        process.exit(1)
     }
 }
 
