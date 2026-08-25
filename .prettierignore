@@ -3,6 +3,7 @@
 CHANGELOG.md
 discord-sync.schema.json
 discord-sync.json
+discord-sync.json.lock
 
 # Exported Discord data & generated renditions (never format these).
 /*/

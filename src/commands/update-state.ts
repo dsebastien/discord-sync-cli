@@ -14,6 +14,7 @@ import { defaultRoots, exportFiles, loadExport } from '../lib/fs'
 import { buildChannelState, DEFAULT_CONFIG_PATH, loadDoc, saveDoc, summarize } from '../lib/state'
 import type { FileSummary } from '../lib/state'
 import { validateDoc } from '../lib/schema'
+import { withConfigLock } from '../lib/lock'
 import type { DiscordSyncDoc } from '../lib/types'
 
 export class UpdateStateError extends Error {}
@@ -91,12 +92,14 @@ export async function main(args: string[]): Promise<void> {
         process.exit(1)
     }
     try {
-        await updateState({
-            dirs,
-            configFile: values.config,
-            name: values.name,
-            channelId: values.channel
-        })
+        await withConfigLock(values.config, () =>
+            updateState({
+                dirs,
+                configFile: values.config,
+                name: values.name,
+                channelId: values.channel
+            })
+        )
     } catch (e) {
         if (e instanceof UpdateStateError) {
             console.error(`error: ${e.message}`)

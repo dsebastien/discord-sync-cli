@@ -22,6 +22,7 @@ import { generateMarkdown } from './generate-markdown'
 import { validateConfigFile } from './validate-state'
 import { resolveToken } from '../lib/discord-api'
 import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
+import { withConfigLock } from '../lib/lock'
 
 export interface SyncOptions {
     channel: string
@@ -45,8 +46,13 @@ function deltaDirName(): string {
 }
 
 /** Run the full pipeline for one channel. Throws SyncError on failure. */
+/** Run the full pipeline for one channel under a config lock. */
 export async function syncOne(opts: SyncOptions): Promise<void> {
     const configFile = opts.configFile ?? DEFAULT_CONFIG_PATH
+    await withConfigLock(configFile, () => syncOneLocked(opts, configFile))
+}
+
+async function syncOneLocked(opts: SyncOptions, configFile: string): Promise<void> {
     const doc = await loadDoc(configFile)
     const known = doc.state.channels[opts.channel]
     const outDir = opts.out ?? known?.directory

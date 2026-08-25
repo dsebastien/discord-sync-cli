@@ -7,6 +7,8 @@
 
 # Local sync state (personal — never commit to this public repo)
 /discord-sync.json
+/discord-sync.json.lock
+/*.tmp-*
 
 
 # Every other top-level directory is exported Discord data (canvas/, bases/,
