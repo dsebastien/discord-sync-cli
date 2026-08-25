@@ -33,7 +33,19 @@ for (const c of commits) {
     else patch++
 }
 
-const [ma = 0, mi = 0, pa = 0] = (lastTag || '0.0.0').split('.').map(Number)
+// Base off the greater of the latest tag and the current package.json version,
+// so a first release (no tags) never downgrades a package already at e.g. 1.0.0.
+const pkgVersion = (await Bun.file('package.json').json()).version ?? '0.0.0'
+function cmp(a: string, b: string): number {
+    const pa = a.split('.').map(Number)
+    const pb = b.split('.').map(Number)
+    for (let i = 0; i < 3; i++) {
+        if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
+    }
+    return 0
+}
+const base = lastTag && cmp(lastTag, pkgVersion) > 0 ? lastTag : pkgVersion
+const [ma = 0, mi = 0, pa = 0] = base.split('.').map(Number)
 let next: string
 if (major > 0) next = `${ma + 1}.0.0`
 else if (minor > 0) next = `${ma}.${mi + 1}.0`

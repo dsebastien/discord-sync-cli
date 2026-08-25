@@ -289,6 +289,32 @@ async function runSyncs(ui: Ui, jobs: Job[]): Promise<void> {
     render(ui)
 }
 
+/** Split a raw stdin chunk into individual key tokens. Terminals can coalesce
+ * several keypresses (or a key repeat) into one chunk; without this, `jj` or
+ * two arrows arriving together would match nothing and be dropped. */
+export function tokenizeKeys(chunk: string): string[] {
+    const keys: string[] = []
+    let i = 0
+    while (i < chunk.length) {
+        if (chunk[i] === ESC) {
+            // CSI sequence: ESC [ ... final byte in @-~; or a bare ESC.
+            if (chunk[i + 1] === '[' || chunk[i + 1] === 'O') {
+                let j = i + 2
+                while (j < chunk.length && !/[@-~]/.test(chunk[j]!)) j++
+                keys.push(chunk.slice(i, j + 1))
+                i = j + 1
+            } else {
+                keys.push(ESC)
+                i++
+            }
+        } else {
+            keys.push(chunk[i]!)
+            i++
+        }
+    }
+    return keys
+}
+
 let apiRef: DiscordApi | null = null
 
 export async function main(args: string[]): Promise<void> {
@@ -345,98 +371,107 @@ export async function main(args: string[]): Promise<void> {
     render(ui)
 
     try {
-        for await (const chunk of process.stdin) {
-            const key = chunk.toString()
+        outer: for await (const chunk of process.stdin) {
+            for (const key of tokenizeKeys(chunk.toString())) {
+                // The syncing view is modal: any key after completion returns to
+                // browsing; keys during a sync are ignored.
+                if (ui.pane === 'syncing') {
+                    if (ui.syncDone) {
+                        ui.pane = 'guilds'
+                        ui.status = `${ui.guilds.length} server(s)`
+                        render(ui)
+                    }
+                    continue
+                }
 
-            // The syncing view is modal: any key after completion returns to
-            // browsing; keys during a sync are ignored.
-            if (ui.pane === 'syncing') {
-                if (ui.syncDone) {
+                const list = ui.pane === 'guilds' ? ui.guilds : ui.channels
+                const move = (d: number) => {
+                    if (ui.pane === 'guilds') {
+                        ui.guildIdx = Math.max(0, Math.min(ui.guilds.length - 1, ui.guildIdx + d))
+                    } else {
+                        ui.channelIdx = Math.max(
+                            0,
+                            Math.min(ui.channels.length - 1, ui.channelIdx + d)
+                        )
+                    }
+                }
+
+                if (key === 'q' || (key === `${ESC}` && ui.pane === 'guilds')) break outer
+                if (key === `${ESC}[A` || key === 'k') move(-1)
+                else if (key === `${ESC}[B` || key === 'j') move(1)
+                else if (key === `${ESC}[5~`) move(-10)
+                else if (key === `${ESC}[6~`) move(10)
+                else if (
+                    (key === '\r' || key === `${ESC}[C` || key === 'l') &&
+                    ui.pane === 'guilds'
+                ) {
+                    await openGuild(ui)
+                } else if (
+                    (key === `${ESC}` || key === `${ESC}[D` || key === 'h') &&
+                    ui.pane === 'channels'
+                ) {
                     ui.pane = 'guilds'
                     ui.status = `${ui.guilds.length} server(s)`
-                    render(ui)
-                }
-                continue
-            }
-
-            const list = ui.pane === 'guilds' ? ui.guilds : ui.channels
-            const move = (d: number) => {
-                if (ui.pane === 'guilds') {
-                    ui.guildIdx = Math.max(0, Math.min(ui.guilds.length - 1, ui.guildIdx + d))
-                } else {
-                    ui.channelIdx = Math.max(0, Math.min(ui.channels.length - 1, ui.channelIdx + d))
-                }
-            }
-
-            if (key === 'q' || (key === `${ESC}` && ui.pane === 'guilds')) break
-            if (key === `${ESC}[A` || key === 'k') move(-1)
-            else if (key === `${ESC}[B` || key === 'j') move(1)
-            else if (key === `${ESC}[5~`) move(-10)
-            else if (key === `${ESC}[6~`) move(10)
-            else if ((key === '\r' || key === `${ESC}[C` || key === 'l') && ui.pane === 'guilds') {
-                await openGuild(ui)
-            } else if (
-                (key === `${ESC}` || key === `${ESC}[D` || key === 'h') &&
-                ui.pane === 'channels'
-            ) {
-                ui.pane = 'guilds'
-                ui.status = `${ui.guilds.length} server(s)`
-            } else if (key === ' ') {
-                const guild = ui.guilds[ui.guildIdx]!
-                if (ui.pane === 'channels') {
-                    const ch = ui.channels[ui.channelIdx]
-                    if (ch) await toggleChannel(ui, guild, ch)
-                } else {
-                    // Toggling a server selects/deselects every exportable channel.
-                    await openGuild(ui)
-                    ui.pane = 'guilds'
-                    const allSelected = ui.channels.every(
-                        (c) => ui.doc.guilds[guild.id]?.channels[c.id]
-                    )
-                    for (const c of ui.channels) {
-                        const has = ui.doc.guilds[guild.id]?.channels[c.id]
-                        if (allSelected && has) {
-                            ui.doc = deselectChannel(ui.doc, guild.id, c.id)
-                        } else if (!allSelected && !has) {
-                            const directory =
-                                ui.doc.state.channels[c.id]?.directory ?? slugify(c.name)
-                            ui.doc = selectChannel(ui.doc, guild, c, directory)
+                } else if (key === ' ') {
+                    const guild = ui.guilds[ui.guildIdx]!
+                    if (ui.pane === 'channels') {
+                        const ch = ui.channels[ui.channelIdx]
+                        if (ch) await toggleChannel(ui, guild, ch)
+                    } else {
+                        // Toggling a server selects/deselects every exportable channel.
+                        await openGuild(ui)
+                        ui.pane = 'guilds'
+                        const allSelected = ui.channels.every(
+                            (c) => ui.doc.guilds[guild.id]?.channels[c.id]
+                        )
+                        for (const c of ui.channels) {
+                            const has = ui.doc.guilds[guild.id]?.channels[c.id]
+                            if (allSelected && has) {
+                                ui.doc = deselectChannel(ui.doc, guild.id, c.id)
+                            } else if (!allSelected && !has) {
+                                const directory =
+                                    ui.doc.state.channels[c.id]?.directory ?? slugify(c.name)
+                                ui.doc = selectChannel(ui.doc, guild, c, directory)
+                            }
+                        }
+                        await saveDoc(ui.configPath, ui.doc)
+                        ui.status = allSelected
+                            ? `deselected all of ${guild.name}`
+                            : `selected all ${ui.channels.length} channel(s) of ${guild.name}`
+                    }
+                } else if (key === 's') {
+                    const guild = ui.guilds[ui.guildIdx]!
+                    const jobs: Job[] = []
+                    if (ui.pane === 'channels') {
+                        const ch = ui.channels[ui.channelIdx]
+                        if (ch) collectJob(ui, guild, ch.id, ch.name, jobs)
+                    } else {
+                        for (const [id, ch] of Object.entries(
+                            ui.doc.guilds[guild.id]?.channels ?? {}
+                        )) {
+                            collectJob(ui, guild, id, ch.name, jobs)
                         }
                     }
-                    await saveDoc(ui.configPath, ui.doc)
-                    ui.status = allSelected
-                        ? `deselected all of ${guild.name}`
-                        : `selected all ${ui.channels.length} channel(s) of ${guild.name}`
-                }
-            } else if (key === 's') {
-                const guild = ui.guilds[ui.guildIdx]!
-                const jobs: Job[] = []
-                if (ui.pane === 'channels') {
-                    const ch = ui.channels[ui.channelIdx]
-                    if (ch) collectJob(ui, guild, ch.id, ch.name, jobs)
-                } else {
-                    for (const [id, ch] of Object.entries(
-                        ui.doc.guilds[guild.id]?.channels ?? {}
-                    )) {
-                        collectJob(ui, guild, id, ch.name, jobs)
+                    if (jobs.length) await runSyncs(ui, jobs)
+                    else ui.status = `nothing to sync here (space to select first)`
+                } else if (key === 'S') {
+                    const jobs: Job[] = []
+                    for (const [gid, g] of Object.entries(ui.doc.guilds)) {
+                        const guild = ui.guilds.find((x) => x.id === gid) ?? {
+                            id: gid,
+                            name: g.name
+                        }
+                        for (const [id, ch] of Object.entries(g.channels)) {
+                            collectJob(ui, guild, id, ch.name, jobs)
+                        }
                     }
+                    if (jobs.length) await runSyncs(ui, jobs)
+                    else ui.status = 'nothing selected anywhere (space to select first)'
+                } else if (list.length === 0) {
+                    ui.status = 'empty'
                 }
-                if (jobs.length) await runSyncs(ui, jobs)
-                else ui.status = `nothing to sync here (space to select first)`
-            } else if (key === 'S') {
-                const jobs: Job[] = []
-                for (const [gid, g] of Object.entries(ui.doc.guilds)) {
-                    const guild = ui.guilds.find((x) => x.id === gid) ?? { id: gid, name: g.name }
-                    for (const [id, ch] of Object.entries(g.channels)) {
-                        collectJob(ui, guild, id, ch.name, jobs)
-                    }
-                }
-                if (jobs.length) await runSyncs(ui, jobs)
-                else ui.status = 'nothing selected anywhere (space to select first)'
-            } else if (list.length === 0) {
-                ui.status = 'empty'
+                render(ui)
             }
-            render(ui)
         }
     } finally {
         cleanup()

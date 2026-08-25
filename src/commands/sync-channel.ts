@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util'
 import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { exportChannel } from './export-channel'
-import { mergeDeltaDir } from './merge-exports'
+import { mergeDeltaDir, MergeError } from './merge-exports'
 import { updateState } from './update-state'
 import { downloadAssets } from './download-assets'
 import { generateHtml } from './generate-html'
@@ -95,7 +95,12 @@ export async function syncOne(opts: SyncOptions): Promise<void> {
             existsSync(deltaDir) && readdirSync(deltaDir).some((f) => f.endsWith('.json'))
         if (hasFiles) {
             console.log('-- merging delta --')
-            await mergeDeltaDir(deltaDir, outDir)
+            try {
+                await mergeDeltaDir(deltaDir, outDir)
+            } catch (e) {
+                if (e instanceof MergeError) throw new SyncError(e.message)
+                throw e
+            }
         } else {
             console.log('-- no new messages --')
             rmSync(deltaDir, { recursive: true, force: true })

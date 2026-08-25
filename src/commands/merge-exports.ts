@@ -16,6 +16,8 @@ import { basename, dirname, join } from 'node:path'
 import { mergeMessages, threadIdOf } from '../lib/merge'
 import { loadExport } from '../lib/fs'
 
+export class MergeError extends Error {}
+
 export async function mergeDeltaDir(
     deltaDir: string,
     masterDir: string,
@@ -39,7 +41,12 @@ export async function mergeDeltaDir(
         if (!name.endsWith('.json')) continue
         const full = join(deltaDir, name)
         const delta = await loadExport(full)
-        if (!delta) continue
+        if (!delta) {
+            // Aborting (not skipping) protects data: if a later valid delta
+            // advanced the cursor past these messages, they'd never be
+            // re-requested. Keep the directory so the next run retries it.
+            throw new MergeError(`could not parse delta ${full}; keeping ${deltaDir} for retry`)
+        }
         const tid = threadIdOf(full, delta)
         const parts = tid ? masters.get(tid) : undefined
 

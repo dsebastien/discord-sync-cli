@@ -48,3 +48,20 @@ describe('threadIdOf', () => {
         expect(threadIdOf('plain.json', {})).toBeNull()
     })
 })
+
+describe('mergeMessages metadata refresh (#13)', () => {
+    test('adopts the newer thread/guild metadata from the delta', () => {
+        const master: DceExport = {
+            guild: { id: '1', name: 'OMG' },
+            channel: { id: '111111111111111111', name: 'old-name' },
+            messages: [{ id: '100000000000000001', timestamp: '2026-01-01T00:00:00+00:00' }]
+        }
+        const delta: DceExport = {
+            guild: { id: '1', name: 'OMG' },
+            channel: { id: '111111111111111111', name: 'new-name' },
+            messages: [{ id: '100000000000000002', timestamp: '2026-02-01T00:00:00+00:00' }]
+        }
+        const { merged } = mergeMessages(master, delta)
+        expect(merged.channel?.name).toBe('new-name')
+    })
+})

@@ -18,6 +18,10 @@ export function mergeMessages(master: DceExport, delta: DceExport): MergeResult 
     return {
         merged: {
             ...master,
+            // Refresh channel/guild metadata from the delta so a thread renamed
+            // on Discord shows its new name after an incremental sync.
+            guild: delta.guild ?? master.guild,
+            channel: delta.channel ?? master.channel,
             messages,
             ...({ messageCount: messages.length } as object),
             exportedAt: delta.exportedAt ?? master.exportedAt

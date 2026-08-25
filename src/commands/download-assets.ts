@@ -14,6 +14,7 @@ import { parseArgs } from 'node:util'
 import { existsSync, mkdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { collectAssets, derivedName, safeName, urlKey } from '../lib/assets'
+import { blockReason } from '../lib/net-guard'
 import { jittered, sleep } from '../lib/core'
 import { defaultRoots, exportFiles, loadExport } from '../lib/fs'
 import type { Manifest } from '../lib/types'
@@ -27,7 +28,24 @@ async function fetchAsset(
 ): Promise<{ ok: boolean; note: string }> {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            const resp = await fetch(url, { headers: { 'User-Agent': UA } })
+            // Follow redirects manually so every hop is SSRF-checked, not just
+            // the first URL (a public URL can 302 to http://169.254.169.254).
+            let current = url
+            let resp: Response | null = null
+            for (let hop = 0; hop < 5; hop++) {
+                const blocked = await blockReason(current)
+                if (blocked) return { ok: false, note: `blocked: ${blocked}` }
+                resp = await fetch(current, {
+                    headers: { 'User-Agent': UA },
+                    redirect: 'manual'
+                })
+                if (resp.status >= 300 && resp.status < 400 && resp.headers.get('location')) {
+                    current = new URL(resp.headers.get('location')!, current).href
+                    continue
+                }
+                break
+            }
+            if (!resp) return { ok: false, note: 'too many redirects' }
             if (resp.ok) {
                 await Bun.write(dest, resp)
                 return { ok: true, note: 'ok' }
