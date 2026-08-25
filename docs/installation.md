@@ -38,14 +38,34 @@ You can also skip the build entirely and run any command with `bun run src/cli.t
 
 ## The Discord token
 
-> ⚠️ **Use a bot token.** Automating a **user** token ("self-botting") violates [Discord's Terms of Service](https://discord.com/terms) and can get the account **permanently terminated**. The tool technically accepts both kinds of token, but the only safe path is a **bot token**:
->
-> 1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and add a **Bot** to it.
-> 2. Enable the **Message Content** privileged intent on the Bot page (without it, exported messages come back empty).
-> 3. Invite the bot to your server with at least the **Read Message History** (and View Channels) permissions.
-> 4. Copy the bot token and give it to the CLI as described below.
->
-> The bot can only export servers it has been invited to.
+> ⚠️ **Use a bot token.** Automating a **user** token ("self-botting") violates [Discord's Terms of Service](https://discord.com/terms) and can get the account **permanently terminated**. The tool technically accepts both kinds of token, but the only safe path is a **bot token**. The bot can only export servers it has been invited to.
+
+### Getting a bot token (recommended)
+
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**. Give it any name (e.g. `my-archive-bot`).
+2. In the left sidebar, open the **Bot** page.
+3. Under **Privileged Gateway Intents**, enable **Message Content Intent** (without it, exported messages come back with empty text).
+4. Still on the Bot page, click **Reset Token**, confirm, and **copy the token immediately** — it is shown only once. This is the value you give to the CLI.
+5. Invite the bot to the server(s) you want to archive:
+    - Open **OAuth2 → URL Generator** in the sidebar.
+    - Under **Scopes**, check `bot`.
+    - Under **Bot Permissions**, check **View Channels** and **Read Message History**.
+    - Copy the generated URL at the bottom, open it in a browser, pick the server, and confirm. (You need the **Manage Server** permission on that server — for servers you don't manage, ask an admin to use the invite URL, or fall back to a user token at your own risk.)
+
+Treat the token like a password: anyone who has it can act as the bot. If it leaks, go back to the Bot page and **Reset Token**.
+
+### Getting your user token (at your own risk)
+
+For servers where you cannot invite a bot (e.g. large communities you don't manage), the only option is your own user token — with the ToS/termination risk described above. A user token gives **full access to your account**, so guard it accordingly. The usual retrieval method, as described in [DiscordChatExporter's guide](https://github.com/Tyrrrz/DiscordChatExporter/blob/master/.docs/Token-and-IDs.md):
+
+1. Open Discord in a **browser** (not the desktop app) and log in.
+2. Open the browser developer tools (`F12` or `Ctrl+Shift+I`) and switch to the **Network** tab.
+3. Interact with Discord (e.g. click a channel) so requests appear, and click any request to `discord.com/api/...`.
+4. In the **Request Headers**, find `Authorization` — its value is your user token.
+
+Never share this token, never commit it, and consider any machine that stores it as holding your Discord credentials.
+
+### Giving the token to the CLI
 
 The token is resolved in this order:
 
