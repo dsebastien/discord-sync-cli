@@ -1,0 +1,14 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Secrets
+.env
+
+# Exported Discord data & local sync state (personal content — never commit)
+canvas/
+bases/
+exports/
+_since-*/
+exports-state.json
+sync-config.json

@@ -1,0 +1,78 @@
+{
+    "name": "discord-sync-cli",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "engines": {
+        "bun": ">=1.4.0"
+    },
+    "scripts": {
+        "test": "bun test",
+        "typecheck": "bun x tsc --noEmit",
+        "sync": "bun run src/cli.ts sync",
+        "export": "bun run src/cli.ts export",
+        "update-state": "bun run src/cli.ts update-state",
+        "merge": "bun run src/cli.ts merge",
+        "assets": "bun run src/cli.ts assets",
+        "html": "bun run src/cli.ts html",
+        "md": "bun run src/cli.ts md",
+        "validate": "bun run tsc && bun test && bun run lint && bun run format:check",
+        "build": "bun build --compile --minify --sourcemap src/cli.ts --outfile dist/discord-sync",
+        "tsc": "tsc --noEmit",
+        "commit": "cz",
+        "cm": "cz",
+        "commit:lint": "commitlint --edit",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "release": "./scripts/release.sh",
+        "release:changelog": "conventional-changelog -p conventionalcommits -i CHANGELOG.md -s",
+        "cli": "bun run src/cli.ts",
+        "sync-all": "bun run src/cli.ts sync-all",
+        "tui": "bun run src/cli.ts tui",
+        "servers": "bun run src/cli.ts servers",
+        "validate-state": "bun run src/cli.ts validate",
+        "tsc:watch": "tsc --noEmit --watch --preserveWatchOutput",
+        "tscw": "bun run tsc:watch",
+        "test:watch": "bun test --watch",
+        "lint": "eslint . --max-warnings 0",
+        "lint:fix": "eslint . --fix",
+        "setup": "git config --local --replace-all include.path ../.gitconfig"
+    },
+    "devDependencies": {
+        "@commitlint/cli": "^21.2.2",
+        "@commitlint/config-conventional": "^21.2.2",
+        "@commitlint/types": "^21.2.0",
+        "@eslint/js": "10.0.1",
+        "@types/bun": "^1.4.0",
+        "@types/node": "^26.3.0",
+        "commitizen": "^4.3.2",
+        "conventional-changelog-cli": "^5.0.0",
+        "conventional-changelog-conventionalcommits": "^10.4.0",
+        "cz-customizable": "^7.5.4",
+        "eslint": "10.9.0",
+        "eslint-config-prettier": "10.1.8",
+        "globals": "17.11.0",
+        "jiti": "2.7.0",
+        "prettier": "^3.9.6",
+        "typescript": "~5.9",
+        "typescript-eslint": "8.67.0"
+    },
+    "dependencies": {
+        "zod": "^4.4.3"
+    },
+    "packageManager": "bun@1.4.0",
+    "config": {
+        "commitizen": {
+            "path": "node_modules/cz-customizable"
+        },
+        "cz-customizable": {
+            "config": ".cz-config.cjs"
+        }
+    },
+    "description": "A CLI/TUI for exporting/synchronizing Discord servers/channels/threads to JSON, HTML & Markdown",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/dsebastien/discord-sync-cli.git"
+    }
+}

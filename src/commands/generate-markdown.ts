@@ -1,0 +1,53 @@
+#!/usr/bin/env bun
+/**
+ * generate-markdown.ts - render exports as Markdown with YAML frontmatter.
+ *
+ * Writes <dir>/md/<thread>.md per thread: frontmatter with explore: false by
+ * default (preserved on regeneration, so flipping it in Obsidian survives a
+ * re-sync), thread metadata, the Discord deep link, then the messages.
+ *
+ *   bun run generate-markdown.ts canvas
+ */
+
+import { existsSync, mkdirSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { parseArgs } from 'node:util'
+import { defaultRoots, exportFiles, loadExport } from '../lib/fs'
+import { threadMarkdown } from '../lib/render-md'
+import type { Manifest } from '../lib/types'
+
+export async function generateMarkdown(root: string): Promise<number> {
+    const manifestPath = join(root, '_assets', 'manifest.json')
+    const manifest: Manifest = existsSync(manifestPath)
+        ? ((await Bun.file(manifestPath).json()) as Manifest)
+        : {}
+
+    const mdDir = join(root, 'md')
+    let made = 0
+    for (const file of exportFiles(root)) {
+        const data = await loadExport(file)
+        if (!data) {
+            console.error(`warn: could not parse ${file}`)
+            continue
+        }
+        mkdirSync(mdDir, { recursive: true })
+        const out = join(mdDir, basename(file).replace(/\.json$/, '.md'))
+        const existing = existsSync(out) ? await Bun.file(out).text() : null
+        await Bun.write(out, threadMarkdown(data, manifest, existing))
+        made++
+    }
+    console.log(`${basename(root)}: wrote ${made} markdown file(s) -> ${mdDir}/`)
+    return made
+}
+
+export async function main(args: string[]): Promise<void> {
+    const { positionals } = parseArgs({ args: args, allowPositionals: true })
+    const roots = positionals.length ? positionals : defaultRoots(process.cwd())
+    if (!roots.length) {
+        console.error('nothing to scan')
+        process.exit(1)
+    }
+    for (const root of roots) await generateMarkdown(root)
+}
+
+if (import.meta.main) await main(Bun.argv.slice(2))

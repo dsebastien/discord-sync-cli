@@ -1,0 +1,22 @@
+telemetry = false
+logLevel = "warn" # "debug" | "warn" | "error"
+
+[console]
+depth = 2
+
+[install]
+auto = "auto"
+exact = true
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# bun-types is @types/bun's transitive payload — excluding one without the
+# other deadlocks installs whenever a fresh Bun ships.
+minimumReleaseAgeExcludes = ["@types/bun", "bun-types", "typescript"]
+
+[run]
+# equivalent to `bun --bun` for all `bun run` commands
+bun = true
+
+[test]
+coverage = false
+onlyFailures = true

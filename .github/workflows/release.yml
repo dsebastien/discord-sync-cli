@@ -1,0 +1,193 @@
+name: Release
+
+# Two-phase release so the provenance attestation is bound to the tag commit:
+# 1. prepare (workflow_dispatch without publish, on a branch): version bump +
+#    changelog + commit, tag that commit (lightweight, so the tag ref points
+#    directly at the commit), then re-dispatch this workflow at the tag ref
+#    with publish=true.
+# 2. publish (workflow_dispatch with publish=true at a tag ref, or a manually
+#    pushed tag): github.sha IS the tagged commit. Builds the binaries for
+#    every target, attests, releases.
+#
+# Recovery: if prepare fails after the tag was pushed, run:
+#   gh workflow run release.yml --ref <version> -f version=<version> -f publish=true
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Version to release (e.g., 1.2.3)'
+                required: true
+                type: string
+            publish:
+                description: 'Internal: build and publish at the current (tag) ref. Leave unchecked to start a release.'
+                required: false
+                type: boolean
+                default: false
+    push:
+        tags:
+            - '[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+    contents: write
+    id-token: write
+    attestations: write
+    actions: write
+
+concurrency:
+    group: release
+    cancel-in-progress: false
+
+jobs:
+    prepare:
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish && startsWith(github.ref, 'refs/heads/')
+        runs-on: ubuntu-slim
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version-file: package.json
+
+            - name: Install dependencies
+              run: bun install --frozen-lockfile
+
+            - name: Configure git
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            - name: Bump version and generate changelog
+              id: version
+              run: |
+                  VERSION="${{ inputs.version }}"
+                  VERSION="${VERSION#v}"
+                  if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                    echo "Invalid version: $VERSION" >&2
+                    exit 1
+                  fi
+                  # Idempotent recovery: if HEAD already is this release commit, skip to tagging.
+                  if git log -1 --pretty=%s | grep -q "chore(release): $VERSION"; then
+                    echo "prepared=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "prepared=false" >> $GITHUB_OUTPUT
+                  fi
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            - name: Update version, changelog, and verify
+              if: steps.version.outputs.prepared != 'true'
+              run: |
+                  VERSION=${{ steps.version.outputs.version }}
+                  bun -e "
+                    const pkg = await Bun.file('package.json').json();
+                    pkg.version = '$VERSION';
+                    await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');
+                  "
+                  bun run release:changelog
+                  bun run tsc
+                  bun run test
+                  bun run build
+
+            - name: Commit release changes
+              if: steps.version.outputs.prepared != 'true'
+              run: |
+                  git add package.json CHANGELOG.md
+                  git commit -m "chore(release): ${{ steps.version.outputs.version }}"
+                  git push origin HEAD:${{ github.ref_name }}
+
+            - name: Tag release commit
+              # Lightweight tag on purpose: the tag ref then points directly at
+              # the commit, so GITHUB_SHA and the attestation subject are
+              # unambiguous on both publish trigger paths.
+              run: |
+                  git tag ${{ steps.version.outputs.version }}
+                  git push origin ${{ steps.version.outputs.version }}
+
+            - name: Dispatch publish run at the tag
+              # A tag pushed with GITHUB_TOKEN does not trigger the tag-push
+              # event (recursion guard), but workflow_dispatch is exempt.
+              run: |
+                  VERSION=${{ steps.version.outputs.version }}
+                  curl --fail-with-body -X POST \
+                    -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                    -H "Accept: application/vnd.github+json" \
+                    https://api.github.com/repos/${{ github.repository }}/actions/workflows/release.yml/dispatches \
+                    -d "{\"ref\":\"refs/tags/$VERSION\",\"inputs\":{\"version\":\"$VERSION\",\"publish\":\"true\"}}" \
+                    || {
+                      echo "Dispatch failed. The tag is already pushed; recover with:" >&2
+                      echo "  gh workflow run release.yml --ref $VERSION -f version=$VERSION -f publish=true" >&2
+                      exit 1
+                    }
+
+    publish:
+        if: >-
+            (github.event_name == 'workflow_dispatch' && inputs.publish && startsWith(github.ref, 'refs/tags/')) ||
+            (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+        runs-on: ubuntu-slim
+        steps:
+            - name: Checkout tag
+              uses: actions/checkout@v6
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version-file: package.json
+
+            - name: Verify tag matches package version
+              id: version
+              run: |
+                  VERSION="${GITHUB_REF_NAME#v}"
+                  if [ "$GITHUB_REF_NAME" != "$VERSION" ]; then
+                    echo "Tag '$GITHUB_REF_NAME' has a 'v' prefix — release tags are bare SemVer." >&2
+                    exit 1
+                  fi
+                  PKG_VERSION=$(bun -e 'console.log(require("./package.json").version)')
+                  if [ "$VERSION" != "$PKG_VERSION" ]; then
+                    echo "Tag $VERSION does not match package.json version $PKG_VERSION." >&2
+                    echo "Tags must point at a release commit (run the prepare phase first)." >&2
+                    exit 1
+                  fi
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            - name: Install dependencies
+              run: bun install --frozen-lockfile
+
+            - name: Build binaries for all targets
+              run: |
+                  mkdir -p dist
+                  for target in bun-linux-x64 bun-linux-arm64 bun-darwin-x64 bun-darwin-arm64 bun-windows-x64; do
+                    suffix="${target#bun-}"
+                    out="dist/discord-sync-${suffix}"
+                    [ "$target" = "bun-windows-x64" ] && out="${out}.exe"
+                    bun build --compile --minify --target="$target" src/cli.ts --outfile "$out"
+                  done
+                  ls -la dist/
+
+            - name: Extract changelog for release notes
+              id: changelog
+              run: |
+                  NOTES=$(awk '/^#+ \[?[0-9]/{if(p) exit; p=1} p' CHANGELOG.md)
+                  echo "notes<<EOF" >> $GITHUB_OUTPUT
+                  echo "$NOTES" >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+
+            - name: Generate artifact attestations
+              uses: actions/attest-build-provenance@v3
+              with:
+                  subject-path: dist/discord-sync-*
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v3
+              with:
+                  tag_name: ${{ steps.version.outputs.version }}
+                  name: ${{ steps.version.outputs.version }}
+                  body: ${{ steps.changelog.outputs.notes }}
+                  files: dist/discord-sync-*
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

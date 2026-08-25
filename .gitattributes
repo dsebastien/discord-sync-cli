@@ -1,0 +1,32 @@
+# Auto detect text files and perform LF normalization
+* text=auto eol=lf
+
+# Diff hints
+*.css diff=css
+*.html diff=html
+*.md diff=markdown
+*.ts diff=typescript
+*.json diff=json
+
+# These files are text and should be normalized (Convert crlf => lf)
+*.bash text eol=lf
+*.html text eol=lf diff=html
+*.js text eol=lf
+*.json text eol=lf
+*.map text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.ts text eol=lf
+*.txt text eol=lf
+
+# Don't include in releases (git archive).
+.github/ export-ignore
+prettier.config.cjs export-ignore
+commitlint.config.ts export-ignore
+.cz-config.cjs export-ignore
+.editorconfig export-ignore
+.nvmrc export-ignore
+
+# Windows specific files that need CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
