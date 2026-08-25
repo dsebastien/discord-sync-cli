@@ -6,6 +6,12 @@ import type { DceExport } from './types'
 
 const SKIP_PARTS = new Set(['_assets', 'html', 'md', '.git', 'node_modules'])
 
+/** Transient incremental-delta directories must never be scanned as masters:
+ * they hold partial data that would double-count or advance cursors wrongly. */
+function isSkipped(name: string): boolean {
+    return SKIP_PARTS.has(name) || name.startsWith('_since-')
+}
+
 /** All export JSON files under a directory, skipping generated folders. */
 export function exportFiles(root: string): string[] {
     const out: string[] = []
@@ -14,7 +20,7 @@ export function exportFiles(root: string): string[] {
             const full = join(dir, name)
             const st = statSync(full)
             if (st.isDirectory()) {
-                if (!SKIP_PARTS.has(name)) walk(full)
+                if (!isSkipped(name)) walk(full)
             } else if (name.endsWith('.json') && name !== 'manifest.json') {
                 out.push(full)
             }
@@ -38,7 +44,7 @@ export async function loadExport(path: string): Promise<DceExport | null> {
 export function defaultRoots(cwd: string): string[] {
     return readdirSync(cwd)
         .filter((name) => {
-            if (SKIP_PARTS.has(name) || name.startsWith('.')) return false
+            if (isSkipped(name) || name.startsWith('.')) return false
             const full = join(cwd, name)
             try {
                 return (

@@ -20,7 +20,8 @@ import { parseArgs } from 'node:util'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { isSnowflake, isoDay, jittered, planChunks, sleep, snowflakeToDate } from '../lib/core'
-import { loadState } from '../lib/state'
+import { resolveToken } from '../lib/discord-api'
+import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
 import type { Chunk } from '../lib/core'
 
 export interface ExportOptions {
@@ -42,6 +43,8 @@ export interface ExportOptions {
     image: string
     force: boolean
     dryRun: boolean
+    /** Passed to docker via the environment (not argv) so .env/--token work. */
+    token?: string | undefined
 }
 
 interface Work extends Partial<Chunk> {
@@ -154,7 +157,12 @@ export async function exportChannel(
             }
             // Piped (not inherited) so callers that capture console output —
             // notably the TUI's sync log — see docker/DCE progress lines too.
-            const proc = Bun.spawn(['docker', ...args], { stdout: 'pipe', stderr: 'pipe' })
+            const env = opts.token ? { ...process.env, DISCORD_TOKEN: opts.token } : process.env
+            const proc = Bun.spawn(['docker', ...args], {
+                stdout: 'pipe',
+                stderr: 'pipe',
+                env
+            })
             const forward = async (
                 stream: ReadableStream<Uint8Array>,
                 sink: (line: string) => void
@@ -222,7 +230,8 @@ export async function main(args: string[]): Promise<void> {
             'media': { type: 'boolean', default: false },
             'flat': { type: 'boolean', default: false },
             'since-state': { type: 'boolean', default: false },
-            'state': { type: 'string', default: 'exports-state.json' },
+            'config': { type: 'string', default: DEFAULT_CONFIG_PATH },
+            'token': { type: 'string' },
             'image': { type: 'string', default: 'tyrrrz/discordchatexporter:stable' },
             'force': { type: 'boolean', default: false },
             'dry-run': { type: 'boolean', default: false }
@@ -232,8 +241,9 @@ export async function main(args: string[]): Promise<void> {
         console.error('error: --channel is required')
         process.exit(1)
     }
-    if (!process.env['DISCORD_TOKEN']) {
-        console.error('error: DISCORD_TOKEN is not set')
+    const token = await resolveToken(values.token)
+    if (!token) {
+        console.error('error: no token (use --token, DISCORD_TOKEN, or a .env file)')
         process.exit(1)
     }
 
@@ -241,11 +251,11 @@ export async function main(args: string[]): Promise<void> {
     let flat = values.flat
     let outDir = values.out
     if (values['since-state']) {
-        const state = await loadState(values.state)
-        const ch = state.channels[values.channel]
+        const doc = await loadDoc(values.config)
+        const ch = doc.state.channels[values.channel]
         if (!ch?.lastMessageId) {
             console.error(
-                `error: channel ${values.channel} has no lastMessageId in ${values.state}`
+                `error: channel ${values.channel} has no lastMessageId in ${values.config}`
             )
             process.exit(1)
         }
@@ -275,7 +285,8 @@ export async function main(args: string[]): Promise<void> {
         afterId,
         image: values.image,
         force: values.force,
-        dryRun: values['dry-run']
+        dryRun: values['dry-run'],
+        token
     })
     if (result.failed > 0) process.exit(1)
 }

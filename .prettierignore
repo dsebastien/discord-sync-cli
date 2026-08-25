@@ -1,9 +1,8 @@
 /node_modules/
 /dist/
 CHANGELOG.md
-exports-state.schema.json
-exports-state.json
-sync-config.json
+discord-sync.schema.json
+discord-sync.json
 
 # Exported Discord data & generated renditions (never format these).
 /*/

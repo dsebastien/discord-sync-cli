@@ -32,10 +32,10 @@ const COMMANDS: Record<string, { run: (args: string[]) => Promise<void>; help: s
     'channels': { run: channels, help: 'list exportable channels of one server (-g <ID>)' },
     'select': {
         run: makeMain('select'),
-        help: 'add channels to sync-config.json (-g <ID> -c <ID> | --all)'
+        help: 'add channels to discord-sync.json (-g <ID> -c <ID> | --all)'
     },
-    'deselect': { run: makeMain('deselect'), help: 'remove channels from sync-config.json' },
-    'sync-all': { run: syncAll, help: 'sync every channel chosen in sync-config.json' },
+    'deselect': { run: makeMain('deselect'), help: 'remove channels from discord-sync.json' },
+    'sync-all': { run: syncAll, help: 'sync every channel chosen in discord-sync.json' },
     'sync': {
         run: syncChannel,
         help: 'export new messages, merge, update state, fetch assets, regenerate html+md'
@@ -64,7 +64,7 @@ const COMMANDS: Record<string, { run: (args: string[]) => Promise<void>; help: s
         run: generateMarkdown,
         help: 'generate <dir>/md/ files (YAML frontmatter, explore flag)'
     },
-    'validate': { run: validateState, help: 'validate exports-state.json against the zod schema' }
+    'validate': { run: validateState, help: 'validate discord-sync.json against the zod schema' }
 }
 
 function usage(): void {

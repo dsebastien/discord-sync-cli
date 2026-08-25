@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * sync-all.ts - sync every channel chosen in sync-config.json.
+ * sync-all.ts - sync every channel chosen in discord-sync.json.
  *
  *   discord-sync sync-all                    # everything configured
  *   discord-sync sync-all -g <GUILD_ID>      # one server only
@@ -8,7 +8,8 @@
  */
 
 import { parseArgs } from 'node:util'
-import { loadConfig } from '../lib/sync-config'
+import { resolveToken } from '../lib/discord-api'
+import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
 import { syncOne, SyncError } from './sync-channel'
 
 export async function main(args: string[]): Promise<void> {
@@ -18,18 +19,17 @@ export async function main(args: string[]): Promise<void> {
             'guild': { type: 'string', short: 'g' },
             'full': { type: 'boolean', default: false },
             'skip-assets': { type: 'boolean', default: false },
-            'state': { type: 'string', default: 'exports-state.json' },
-            'config': { type: 'string', default: 'sync-config.json' }
+            'token': { type: 'string' },
+            'config': { type: 'string', default: DEFAULT_CONFIG_PATH }
         }
     })
-    if (!process.env['DISCORD_TOKEN']) {
-        console.error('error: DISCORD_TOKEN is not set')
+    const token = await resolveToken(values.token)
+    if (!token) {
+        console.error('error: no token (use --token, DISCORD_TOKEN, or a .env file)')
         process.exit(1)
     }
-    const config = await loadConfig(values.config)
-    const guilds = Object.entries(config.guilds).filter(
-        ([id]) => !values.guild || id === values.guild
-    )
+    const doc = await loadDoc(values.config)
+    const guilds = Object.entries(doc.guilds).filter(([id]) => !values.guild || id === values.guild)
     const jobs = guilds.flatMap(([, g]) =>
         Object.entries(g.channels).map(([id, ch]) => ({ id, ...ch, guildName: g.name }))
     )
@@ -53,7 +53,8 @@ export async function main(args: string[]): Promise<void> {
                 name: job.name,
                 full: values.full,
                 skipAssets: values['skip-assets'],
-                stateFile: values.state
+                configFile: values.config,
+                token
             })
         } catch (e) {
             if (e instanceof SyncError) {

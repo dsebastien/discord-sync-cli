@@ -1,9 +1,9 @@
-/** Zod schema for exports-state.json - the source of truth for its shape.
- * The JSON Schema file at the repo root is generated from this
- * (bun run src/validate-state.ts --emit-json-schema). */
+/** Zod schema for discord-sync.json - the single project config+state file,
+ * and the source of truth for its shape. The JSON Schema at the repo root is
+ * generated from this (validate --emit-json-schema). */
 
 import { z } from 'zod'
-import type { ExportsState } from './types'
+import type { DiscordSyncDoc } from './types'
 
 const snowflake = z.string().regex(/^[0-9]{17,20}$/, 'must be a Discord snowflake')
 const timestamp = z
@@ -12,6 +12,27 @@ const timestamp = z
         /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$/,
         'must be an ISO-8601 timestamp'
     )
+
+const frontmatterScalar = z.union([z.string(), z.number(), z.boolean()])
+const frontmatterValue = z.union([frontmatterScalar, z.array(frontmatterScalar)])
+
+export const DEFAULT_SETTINGS = {
+    assetDelayMs: 400,
+    assetJitterMs: 400,
+    exportDelaySeconds: 45,
+    exportJitterSeconds: 30,
+    frontmatter: {} as Record<string, z.infer<typeof frontmatterValue>>
+}
+
+export const SettingsSchema = z
+    .strictObject({
+        assetDelayMs: z.number().min(0).default(DEFAULT_SETTINGS.assetDelayMs),
+        assetJitterMs: z.number().min(0).default(DEFAULT_SETTINGS.assetJitterMs),
+        exportDelaySeconds: z.number().min(0).default(DEFAULT_SETTINGS.exportDelaySeconds),
+        exportJitterSeconds: z.number().min(0).default(DEFAULT_SETTINGS.exportJitterSeconds),
+        frontmatter: z.record(z.string(), frontmatterValue).default({})
+    })
+    .default(DEFAULT_SETTINGS)
 
 export const ThreadStateSchema = z.strictObject({
     name: z.string().nullable(),
@@ -37,16 +58,28 @@ export const ChannelStateSchema = z.strictObject({
     threads: z.record(snowflake, ThreadStateSchema)
 })
 
-export const ExportsStateSchema = z.strictObject({
+export const GuildSelectionSchema = z.strictObject({
+    name: z.string(),
+    channels: z.record(
+        snowflake,
+        z.strictObject({ name: z.string(), directory: z.string().min(1) })
+    )
+})
+
+export const DiscordSyncSchema = z.strictObject({
     $schema: z.string().optional(),
     version: z.literal(1),
     updatedAt: timestamp.optional(),
-    channels: z.record(snowflake, ChannelStateSchema)
+    settings: SettingsSchema,
+    guilds: z.record(snowflake, GuildSelectionSchema).default({}),
+    state: z
+        .strictObject({ channels: z.record(snowflake, ChannelStateSchema) })
+        .default({ channels: {} })
 })
 
 /** Validate; returns formatted "path: message" strings, empty when valid. */
-export function validateState(instance: unknown): string[] {
-    const result = ExportsStateSchema.safeParse(instance)
+export function validateDoc(instance: unknown): string[] {
+    const result = DiscordSyncSchema.safeParse(instance)
     if (result.success) return []
     return result.error.issues.map((i) => `$.${i.path.join('.')}: ${i.message}`)
 }
@@ -54,11 +87,11 @@ export function validateState(instance: unknown): string[] {
 /** JSON Schema rendition for editors, generated from the zod schema. */
 export function toJsonSchema(): object {
     return {
-        $id: 'exports-state.schema.json',
-        title: 'Discord export state',
+        $id: 'discord-sync.schema.json',
+        title: 'discord-sync project file',
         description:
-            'Per-channel resume cursors for the export/sync scripts. Generated from src/lib/schema.ts - edit the zod schema, not this file.',
-        ...z.toJSONSchema(ExportsStateSchema)
+            'Single config+state file for discord-sync. Generated from src/lib/schema.ts - edit the zod schema, not this file.',
+        ...z.toJSONSchema(DiscordSyncSchema)
     }
 }
 
@@ -67,16 +100,30 @@ export interface SemanticReport {
     warnings: string[]
 }
 
-/** Checks the schema cannot express: directories exist, channel cursor is
- * consistent with its threads. `dirExists` is injected for testability. */
+/** Checks the schema cannot express: directories exist, are unique per
+ * channel, and channel cursors are consistent with their threads.
+ * `dirExists` is injected for testability. */
 export function semanticChecks(
-    state: ExportsState,
+    doc: DiscordSyncDoc,
     dirExists: (dir: string) => boolean
 ): SemanticReport {
     const errors: string[] = []
     const warnings: string[] = []
-    for (const [cid, ch] of Object.entries(state.channels ?? {})) {
-        const prefix = `channels.${cid}`
+    const channels = doc.state?.channels ?? {}
+
+    // Two channels must not share an output directory (silent data mixing).
+    const byDir = new Map<string, string[]>()
+    for (const [cid, ch] of Object.entries(channels)) {
+        byDir.set(ch.directory, [...(byDir.get(ch.directory) ?? []), cid])
+    }
+    for (const [dir, ids] of byDir) {
+        if (ids.length > 1) {
+            errors.push(`state: directory '${dir}' is shared by channels ${ids.join(', ')}`)
+        }
+    }
+
+    for (const [cid, ch] of Object.entries(channels)) {
+        const prefix = `state.channels.${cid}`
         if (ch.directory && !dirExists(ch.directory)) {
             warnings.push(`${prefix}: directory '${ch.directory}' does not exist`)
         }

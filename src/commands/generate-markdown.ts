@@ -14,9 +14,12 @@ import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { defaultRoots, exportFiles, loadExport } from '../lib/fs'
 import { threadMarkdown } from '../lib/render-md'
-import type { Manifest } from '../lib/types'
+import type { FrontmatterValue, Manifest } from '../lib/types'
 
-export async function generateMarkdown(root: string): Promise<number> {
+export async function generateMarkdown(
+    root: string,
+    frontmatter: Record<string, FrontmatterValue> = {}
+): Promise<number> {
     const manifestPath = join(root, '_assets', 'manifest.json')
     const manifest: Manifest = existsSync(manifestPath)
         ? ((await Bun.file(manifestPath).json()) as Manifest)
@@ -33,7 +36,7 @@ export async function generateMarkdown(root: string): Promise<number> {
         mkdirSync(mdDir, { recursive: true })
         const out = join(mdDir, basename(file).replace(/\.json$/, '.md'))
         const existing = existsSync(out) ? await Bun.file(out).text() : null
-        await Bun.write(out, threadMarkdown(data, manifest, existing))
+        await Bun.write(out, threadMarkdown(data, manifest, existing, frontmatter))
         made++
     }
     console.log(`${basename(root)}: wrote ${made} markdown file(s) -> ${mdDir}/`)

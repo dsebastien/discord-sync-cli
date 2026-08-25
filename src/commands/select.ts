@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * select.ts - add or remove channels from sync-config.json.
+ * select.ts - add or remove channels from discord-sync.json.
  *
  *   discord-sync select -g <GUILD_ID> -c <CHANNEL_ID> [-c ...]
  *   discord-sync select -g <GUILD_ID> --all            # every exportable channel
@@ -10,8 +10,8 @@
 
 import { parseArgs } from 'node:util'
 import { DiscordApi, resolveToken, slugify } from '../lib/discord-api'
-import { deselectChannel, loadConfig, saveConfig, selectChannel } from '../lib/sync-config'
-import { loadState } from '../lib/state'
+import { deselectChannel, directoryTaken, selectChannel } from '../lib/sync-config'
+import { DEFAULT_CONFIG_PATH, loadDoc, saveDoc } from '../lib/state'
 
 export function makeMain(mode: 'select' | 'deselect') {
     return async function main(args: string[]): Promise<void> {
@@ -22,25 +22,24 @@ export function makeMain(mode: 'select' | 'deselect') {
                 channel: { type: 'string', short: 'c', multiple: true },
                 all: { type: 'boolean', default: false },
                 token: { type: 'string' },
-                state: { type: 'string', default: 'exports-state.json' },
-                config: { type: 'string', default: 'sync-config.json' }
+                config: { type: 'string', default: DEFAULT_CONFIG_PATH }
             }
         })
         if (!values.guild || (!values.channel?.length && !values.all)) {
             console.error(`usage: discord-sync ${mode} -g <GUILD_ID> (-c <CHANNEL_ID> ... | --all)`)
             process.exit(1)
         }
-        let config = await loadConfig(values.config)
+        let doc = await loadDoc(values.config)
 
         if (mode === 'deselect') {
             const targets = values.all
-                ? Object.keys(config.guilds[values.guild]?.channels ?? {})
+                ? Object.keys(doc.guilds[values.guild]?.channels ?? {})
                 : values.channel!
             for (const id of targets) {
-                config = deselectChannel(config, values.guild, id)
+                doc = deselectChannel(doc, values.guild, id)
                 console.log(`deselected ${id}`)
             }
-            await saveConfig(values.config, config)
+            await saveDoc(values.config, doc)
             return
         }
 
@@ -51,10 +50,9 @@ export function makeMain(mode: 'select' | 'deselect') {
             process.exit(1)
         }
         const api = new DiscordApi(token)
-        const [channels, guilds, state] = await Promise.all([
+        const [channels, guilds] = await Promise.all([
             api.listChannels(values.guild),
-            api.listGuilds(),
-            loadState(values.state)
+            api.listGuilds()
         ])
         const guild = guilds.find((g) => g.id === values.guild)
         if (!guild) {
@@ -72,11 +70,19 @@ export function makeMain(mode: 'select' | 'deselect') {
                   return ch
               })
         for (const ch of wanted) {
-            const directory = state.channels[ch.id]?.directory ?? slugify(ch.name)
-            config = selectChannel(config, guild, ch, directory)
+            let directory = doc.state.channels[ch.id]?.directory ?? slugify(ch.name)
+            // Avoid two channels writing into the same folder (silent data mixing).
+            if (directoryTaken(doc, directory, ch.id)) {
+                const disambiguated = `${directory}-${ch.id}`
+                console.error(
+                    `note: directory '${directory}/' is taken; using '${disambiguated}/' for ${ch.name}`
+                )
+                directory = disambiguated
+            }
+            doc = selectChannel(doc, guild, ch, directory)
             console.log(`selected ${ch.id}  ${ch.name} -> ${directory}/`)
         }
-        await saveConfig(values.config, config)
+        await saveDoc(values.config, doc)
     }
 }
 

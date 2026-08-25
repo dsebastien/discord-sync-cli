@@ -2,7 +2,7 @@
 
 import { IMAGE_EXTS, extOf, urlKey } from './assets'
 import { discordUrl } from './core'
-import type { DceExport, Manifest } from './types'
+import type { DceExport, FrontmatterValue, Manifest } from './types'
 
 function localAssetMd(url: string, manifest: Manifest): string | null {
     const entry = manifest[urlKey(url)]
@@ -13,6 +13,25 @@ function localAssetMd(url: string, manifest: Manifest): string | null {
 
 export function yamlStr(value: string): string {
     return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+}
+
+/** Serialize a user-configured frontmatter value to YAML. */
+export function yamlValue(value: FrontmatterValue): string {
+    if (Array.isArray(value)) {
+        return (
+            '[' +
+            value.map((v) => (typeof v === 'string' ? yamlStr(v) : String(v))).join(', ') +
+            ']'
+        )
+    }
+    return typeof value === 'string' ? yamlStr(value) : String(value)
+}
+
+/** Neutralize Obsidian-only wikilink/embed syntax in attacker-controlled
+ * message content so a Discord message like `![[Private note]]` becomes inert
+ * text instead of a live embed when the Markdown is opened in a vault. */
+export function neutralizeObsidian(text: string): string {
+    return text.replace(/!?\[\[/g, (m) => m.replace(/\[/g, '\\['))
 }
 
 const EXPLORE_RE = /^explore:\s*(true|false)\s*$/m
@@ -30,7 +49,8 @@ export function existingExplore(existing: string | null): 'true' | 'false' {
 export function threadMarkdown(
     data: DceExport,
     manifest: Manifest,
-    existing: string | null
+    existing: string | null,
+    extraFrontmatter: Record<string, FrontmatterValue> = {}
 ): string {
     const ch = data.channel ?? {}
     const guild = data.guild ?? {}
@@ -45,9 +65,31 @@ export function threadMarkdown(
         .sort()
     const authors = [...new Set(msgs.map((m) => m.author?.name ?? '').filter(Boolean))].sort()
 
+    const exploreDefault =
+        typeof extraFrontmatter['explore'] === 'boolean'
+            ? String(extraFrontmatter['explore'])
+            : 'false'
+    const explore = existing ? existingExplore(existing) : exploreDefault
+    const builtinKeys = new Set([
+        'explore',
+        'thread',
+        'thread_id',
+        'channel',
+        'channel_id',
+        'guild',
+        'guild_id',
+        'discord_url',
+        'created',
+        'last_message',
+        'message_count',
+        'authors'
+    ])
+    const extraLines = Object.entries(extraFrontmatter)
+        .filter(([k]) => !builtinKeys.has(k))
+        .map(([k, v]) => `${k}: ${yamlValue(v)}`)
     const fm = [
         '---',
-        `explore: ${existingExplore(existing)}`,
+        `explore: ${explore}`,
         `thread: ${yamlStr(ch.name ?? '')}`,
         `thread_id: "${tid}"`,
         `channel: ${yamlStr(ch.category ?? '')}`,
@@ -60,6 +102,7 @@ export function threadMarkdown(
         `message_count: ${msgs.length}`,
         'authors:',
         ...authors.map((a) => `  - ${yamlStr(a)}`),
+        ...extraLines,
         '---'
     ]
 
@@ -72,7 +115,7 @@ export function threadMarkdown(
         const mid = msg.id ?? ''
         const link = baseUrl && mid ? ` · [↗](${discordUrl(gid, tid, mid)})` : ''
         lines.push(`## ${author} — ${ts} UTC${link}`, '')
-        if (msg.content) lines.push(msg.content, '')
+        if (msg.content) lines.push(neutralizeObsidian(msg.content), '')
         for (const att of msg.attachments ?? []) {
             const url = att.url ?? ''
             const href = localAssetMd(url, manifest) ?? url

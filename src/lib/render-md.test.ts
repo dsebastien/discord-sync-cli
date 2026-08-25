@@ -71,3 +71,37 @@ describe('yamlStr', () => {
         expect(yamlStr('a"b\\c')).toBe('"a\\"b\\\\c"')
     })
 })
+
+describe('configurable frontmatter', () => {
+    const doc: DceExport = {
+        guild: { id: '686053708261228577', name: 'OMG' },
+        channel: { id: '1512189374282862824', category: 'canvas-showcase', name: 'My Canvas' },
+        messages: [
+            {
+                id: '1',
+                timestamp: '2026-06-04T20:20:41.949+00:00',
+                author: { name: 'w01ak' },
+                content: 'hi ![[Secret note]] there'
+            }
+        ]
+    }
+    test('injects user keys and honors explore default from settings', () => {
+        const md = threadMarkdown(doc, {}, null, {
+            explore: true,
+            status: 'inbox',
+            tags: ['discord', 'showcase']
+        })
+        expect(md).toContain('explore: true')
+        expect(md).toContain('status: "inbox"')
+        expect(md).toContain('tags: ["discord", "showcase"]')
+    })
+    test('existing explore wins over settings default', () => {
+        const md = threadMarkdown(doc, {}, '---\nexplore: false\n---', { explore: true })
+        expect(md).toContain('explore: false')
+    })
+    test('neutralizes Obsidian embed syntax in message content', () => {
+        const md = threadMarkdown(doc, {}, null, {})
+        expect(md).toContain('!\\[\\[Secret note]]')
+        expect(md).not.toContain('hi ![[Secret note]]')
+    })
+})

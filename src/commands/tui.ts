@@ -25,14 +25,11 @@ import {
     channelMark,
     deselectChannel,
     guildMark,
-    loadConfig,
     MARK_GLYPH,
-    saveConfig,
     selectChannel
 } from '../lib/sync-config'
-import type { SyncConfig } from '../lib/sync-config'
-import { loadState } from '../lib/state'
-import type { ExportsState } from '../lib/types'
+import { DEFAULT_CONFIG_PATH, loadDoc, saveDoc } from '../lib/state'
+import type { DiscordSyncDoc } from '../lib/types'
 import { syncOne, SyncError } from './sync-channel'
 
 const ESC = '\x1b'
@@ -67,10 +64,9 @@ interface Ui {
     jobs: Job[]
     log: string[]
     syncDone: boolean
-    state: ExportsState
-    config: SyncConfig
+    doc: DiscordSyncDoc
     configPath: string
-    statePath: string
+    token: string
 }
 
 function rows(): number {
@@ -165,14 +161,14 @@ function render(ui: Ui): void {
         ui.pane === 'guilds'
             ? ui.guilds.map((g, i) => ({
                   key: i,
-                  text: `${glyph(guildMark(ui.state, ui.config, g.id))} ${g.name}`
+                  text: `${glyph(guildMark(ui.doc, g.id))} ${g.name}`
               }))
             : ui.channels.map((c, i) => {
                   const guild = ui.guilds[ui.guildIdx]!
                   const cat = c.category ? `${DIM}${c.category} /${RESET} ` : ''
                   return {
                       key: i,
-                      text: `${glyph(channelMark(ui.state, ui.config, guild.id, c.id))} ${cat}${c.name} ${DIM}[${channelKind(c)}]${RESET}`
+                      text: `${glyph(channelMark(ui.doc, guild.id, c.id))} ${cat}${c.name} ${DIM}[${channelKind(c)}]${RESET}`
                   }
               })
     const idx = ui.pane === 'guilds' ? ui.guildIdx : ui.channelIdx
@@ -194,8 +190,8 @@ function render(ui: Ui): void {
 
 function collectJob(ui: Ui, guild: Guild, id: string, name: string, into: Job[]): void {
     const directory =
-        ui.state.channels[id]?.directory ??
-        ui.config.guilds[guild.id]?.channels[id]?.directory ??
+        ui.doc.state.channels[id]?.directory ??
+        ui.doc.guilds[guild.id]?.channels[id]?.directory ??
         slugify(name)
     if (!into.some((j) => j.channel.id === id)) {
         into.push({ guild, channel: { id, name, directory }, status: 'pending' })
@@ -207,15 +203,15 @@ async function toggleChannel(
     guild: Guild,
     ch: { id: string; name: string }
 ): Promise<void> {
-    if (ui.config.guilds[guild.id]?.channels[ch.id]) {
-        ui.config = deselectChannel(ui.config, guild.id, ch.id)
+    if (ui.doc.guilds[guild.id]?.channels[ch.id]) {
+        ui.doc = deselectChannel(ui.doc, guild.id, ch.id)
         ui.status = `deselected ${ch.name}`
     } else {
-        const directory = ui.state.channels[ch.id]?.directory ?? slugify(ch.name)
-        ui.config = selectChannel(ui.config, guild, ch, directory)
+        const directory = ui.doc.state.channels[ch.id]?.directory ?? slugify(ch.name)
+        ui.doc = selectChannel(ui.doc, guild, ch, directory)
         ui.status = `selected ${ch.name} -> ${directory}/`
     }
-    await saveConfig(ui.configPath, ui.config)
+    await saveDoc(ui.configPath, ui.doc)
 }
 
 async function openGuild(ui: Ui): Promise<void> {
@@ -265,7 +261,8 @@ async function runSyncs(ui: Ui, jobs: Job[]): Promise<void> {
                     channel: job.channel.id,
                     out: job.channel.directory,
                     name: job.channel.name,
-                    stateFile: ui.statePath
+                    configFile: ui.configPath,
+                    token: ui.token
                 })
                 job.status = 'done'
             } catch (e) {
@@ -276,8 +273,8 @@ async function runSyncs(ui: Ui, jobs: Job[]): Promise<void> {
                 )
                 if (!(e instanceof SyncError)) throw e
             }
-            // Reload state so browsing markers reflect what was just synced.
-            ui.state = await loadState(ui.statePath)
+            // Reload so browsing markers reflect what was just synced.
+            ui.doc = await loadDoc(ui.configPath)
             render(ui)
         }
     } finally {
@@ -299,19 +296,12 @@ export async function main(args: string[]): Promise<void> {
         args,
         options: {
             token: { type: 'string' },
-            state: { type: 'string', default: 'exports-state.json' },
-            config: { type: 'string', default: 'sync-config.json' }
+            config: { type: 'string', default: DEFAULT_CONFIG_PATH }
         }
     })
     const token = await resolveToken(values.token)
     if (!token) {
         console.error('error: no token (use --token, DISCORD_TOKEN, or a .env file)')
-        process.exit(1)
-    }
-    if (!process.env['DISCORD_TOKEN']) {
-        console.error(
-            'error: syncing needs DISCORD_TOKEN in the environment (it is passed to docker); export it before running the TUI'
-        )
         process.exit(1)
     }
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -323,11 +313,7 @@ export async function main(args: string[]): Promise<void> {
     apiRef = new DiscordApi(token)
 
     console.log('loading servers...')
-    const [guilds, state, config] = await Promise.all([
-        apiRef.listGuilds(),
-        loadState(values.state),
-        loadConfig(values.config)
-    ])
+    const [guilds, doc] = await Promise.all([apiRef.listGuilds(), loadDoc(values.config)])
     const ui: Ui = {
         pane: 'guilds',
         guilds,
@@ -339,10 +325,9 @@ export async function main(args: string[]): Promise<void> {
         jobs: [],
         log: [],
         syncDone: false,
-        state,
-        config,
+        doc,
         configPath: values.config,
-        statePath: values.state
+        token
     }
 
     process.stdout.write(ALT_ON)
@@ -406,18 +391,19 @@ export async function main(args: string[]): Promise<void> {
                     await openGuild(ui)
                     ui.pane = 'guilds'
                     const allSelected = ui.channels.every(
-                        (c) => ui.config.guilds[guild.id]?.channels[c.id]
+                        (c) => ui.doc.guilds[guild.id]?.channels[c.id]
                     )
                     for (const c of ui.channels) {
-                        const has = ui.config.guilds[guild.id]?.channels[c.id]
+                        const has = ui.doc.guilds[guild.id]?.channels[c.id]
                         if (allSelected && has) {
-                            ui.config = deselectChannel(ui.config, guild.id, c.id)
+                            ui.doc = deselectChannel(ui.doc, guild.id, c.id)
                         } else if (!allSelected && !has) {
-                            const directory = ui.state.channels[c.id]?.directory ?? slugify(c.name)
-                            ui.config = selectChannel(ui.config, guild, c, directory)
+                            const directory =
+                                ui.doc.state.channels[c.id]?.directory ?? slugify(c.name)
+                            ui.doc = selectChannel(ui.doc, guild, c, directory)
                         }
                     }
-                    await saveConfig(ui.configPath, ui.config)
+                    await saveDoc(ui.configPath, ui.doc)
                     ui.status = allSelected
                         ? `deselected all of ${guild.name}`
                         : `selected all ${ui.channels.length} channel(s) of ${guild.name}`
@@ -430,7 +416,7 @@ export async function main(args: string[]): Promise<void> {
                     if (ch) collectJob(ui, guild, ch.id, ch.name, jobs)
                 } else {
                     for (const [id, ch] of Object.entries(
-                        ui.config.guilds[guild.id]?.channels ?? {}
+                        ui.doc.guilds[guild.id]?.channels ?? {}
                     )) {
                         collectJob(ui, guild, id, ch.name, jobs)
                     }
@@ -439,7 +425,7 @@ export async function main(args: string[]): Promise<void> {
                 else ui.status = `nothing to sync here (space to select first)`
             } else if (key === 'S') {
                 const jobs: Job[] = []
-                for (const [gid, g] of Object.entries(ui.config.guilds)) {
+                for (const [gid, g] of Object.entries(ui.doc.guilds)) {
                     const guild = ui.guilds.find((x) => x.id === gid) ?? { id: gid, name: g.name }
                     for (const [id, ch] of Object.entries(g.channels)) {
                         collectJob(ui, guild, id, ch.name, jobs)

@@ -8,8 +8,8 @@
 
 import { parseArgs } from 'node:util'
 import { channelKind, DiscordApi, resolveToken } from '../lib/discord-api'
-import { channelMark, loadConfig, MARK_GLYPH } from '../lib/sync-config'
-import { loadState } from '../lib/state'
+import { channelMark, MARK_GLYPH } from '../lib/sync-config'
+import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
 
 export async function main(args: string[]): Promise<void> {
     const { values } = parseArgs({
@@ -18,8 +18,7 @@ export async function main(args: string[]): Promise<void> {
             guild: { type: 'string', short: 'g' },
             token: { type: 'string' },
             json: { type: 'boolean', default: false },
-            state: { type: 'string', default: 'exports-state.json' },
-            config: { type: 'string', default: 'sync-config.json' }
+            config: { type: 'string', default: DEFAULT_CONFIG_PATH }
         }
     })
     if (!values.guild) {
@@ -32,17 +31,16 @@ export async function main(args: string[]): Promise<void> {
         process.exit(1)
     }
     const api = new DiscordApi(token)
-    const [channels, state, config] = await Promise.all([
+    const [channels, doc] = await Promise.all([
         api.listChannels(values.guild),
-        loadState(values.state),
-        loadConfig(values.config)
+        loadDoc(values.config)
     ])
     const rows = channels.map((c) => ({
         id: c.id,
         name: c.name,
         kind: channelKind(c),
         category: c.category,
-        mark: channelMark(state, config, values.guild!, c.id)
+        mark: channelMark(doc, values.guild!, c.id)
     }))
     if (values.json) {
         console.log(JSON.stringify(rows, null, 2))

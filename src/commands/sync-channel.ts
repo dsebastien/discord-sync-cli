@@ -6,8 +6,8 @@
  *   discord-sync sync -c <NEW_ID> -o mydir --name my-channel   # first time
  *
  * Pipeline: export (incremental for known channels, full otherwise) -> merge
- * delta -> update exports-state.json -> download assets -> generate HTML and
- * Markdown. Directory and name for known channels come from the state file.
+ * delta -> update discord-sync.json state -> download assets -> generate HTML
+ * and Markdown. Directory/name for known channels come from the state.
  */
 
 import { parseArgs } from 'node:util'
@@ -19,9 +19,9 @@ import { updateState } from './update-state'
 import { downloadAssets } from './download-assets'
 import { generateHtml } from './generate-html'
 import { generateMarkdown } from './generate-markdown'
-import { validateStateFile } from './validate-state'
-import { isoDay } from '../lib/core'
-import { loadState } from '../lib/state'
+import { validateConfigFile } from './validate-state'
+import { resolveToken } from '../lib/discord-api'
+import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
 
 export interface SyncOptions {
     channel: string
@@ -29,30 +29,46 @@ export interface SyncOptions {
     name?: string | undefined
     full?: boolean
     skipAssets?: boolean
-    stateFile?: string
+    configFile?: string
+    /** Explicit token; falls back to resolveToken() (env / .env). */
+    token?: string | undefined
 }
 
 export class SyncError extends Error {}
 
+/** A unique delta directory per run so two syncs of the same channel on the
+ * same day cannot collide. */
+function deltaDirName(): string {
+    const now = new Date()
+    const stamp = now.toISOString().replace(/[:T]/g, '-').replace(/\..+/, '')
+    return `_since-${stamp}-${process.pid}`
+}
+
 /** Run the full pipeline for one channel. Throws SyncError on failure. */
 export async function syncOne(opts: SyncOptions): Promise<void> {
-    const stateFile = opts.stateFile ?? 'exports-state.json'
-    const state = await loadState(stateFile)
-    const known = state.channels[opts.channel]
+    const configFile = opts.configFile ?? DEFAULT_CONFIG_PATH
+    const doc = await loadDoc(configFile)
+    const known = doc.state.channels[opts.channel]
     const outDir = opts.out ?? known?.directory
     const name = opts.name ?? known?.name ?? undefined
     if (!outDir) {
         throw new SyncError(
-            `channel ${opts.channel} is not in ${stateFile} yet - pass a directory (and ideally a name)`
+            `channel ${opts.channel} is not in ${configFile} yet - pass a directory (and ideally a name)`
         )
+    }
+
+    const token = await resolveToken(opts.token)
+    if (!token) {
+        throw new SyncError('no token (use --token, DISCORD_TOKEN, or a .env file)')
     }
 
     console.log(`== sync ${opts.channel} (${name ?? 'unnamed'}) -> ${outDir}/ ==`)
 
+    const { settings } = doc
     const common = {
         stepDays: 30,
-        sleepSeconds: 45,
-        jitterSeconds: 30,
+        sleepSeconds: settings.exportDelaySeconds,
+        jitterSeconds: settings.exportJitterSeconds,
         format: 'Json',
         threads: 'All',
         partition: '10mb',
@@ -60,12 +76,13 @@ export async function syncOne(opts: SyncOptions): Promise<void> {
         media: false,
         image: 'tyrrrz/discordchatexporter:stable',
         force: false,
-        dryRun: false
+        dryRun: false,
+        token
     }
 
     if (known?.lastMessageId && !opts.full) {
         console.log('-- incremental export --')
-        const deltaDir = join(outDir, `_since-${isoDay(new Date())}`)
+        const deltaDir = join(outDir, deltaDirName())
         const result = await exportChannel({
             ...common,
             channel: opts.channel,
@@ -95,8 +112,8 @@ export async function syncOne(opts: SyncOptions): Promise<void> {
     }
 
     console.log('-- updating state --')
-    await updateState({ dirs: [outDir], stateFile, name, channelId: opts.channel })
-    const { errors } = await validateStateFile(stateFile)
+    await updateState({ dirs: [outDir], configFile, name, channelId: opts.channel })
+    const { errors } = await validateConfigFile(configFile)
     if (errors.length) {
         throw new SyncError(`state validation failed:\n${errors.map((e) => `  ${e}`).join('\n')}`)
     }
@@ -104,8 +121,8 @@ export async function syncOne(opts: SyncOptions): Promise<void> {
     if (!opts.skipAssets) {
         console.log('-- downloading assets --')
         await downloadAssets(outDir, {
-            delay: 0.4,
-            jitter: 0.4,
+            delay: settings.assetDelayMs / 1000,
+            jitter: settings.assetJitterMs / 1000,
             retries: 4,
             retryFailed: false,
             dryRun: false
@@ -115,7 +132,7 @@ export async function syncOne(opts: SyncOptions): Promise<void> {
     console.log('-- generating html --')
     await generateHtml(outDir)
     console.log('-- generating markdown --')
-    await generateMarkdown(outDir)
+    await generateMarkdown(outDir, settings.frontmatter)
 
     console.log(`== sync complete: ${outDir}/html/index.html ==`)
 }
@@ -129,15 +146,12 @@ export async function main(args: string[]): Promise<void> {
             'name': { type: 'string' },
             'full': { type: 'boolean', default: false },
             'skip-assets': { type: 'boolean', default: false },
-            'state': { type: 'string', default: 'exports-state.json' }
+            'token': { type: 'string' },
+            'config': { type: 'string', default: DEFAULT_CONFIG_PATH }
         }
     })
     if (!values.channel) {
         console.error('error: --channel is required')
-        process.exit(1)
-    }
-    if (!process.env['DISCORD_TOKEN']) {
-        console.error('error: DISCORD_TOKEN is not set')
         process.exit(1)
     }
     try {
@@ -147,7 +161,8 @@ export async function main(args: string[]): Promise<void> {
             name: values.name,
             full: values.full,
             skipAssets: values['skip-assets'],
-            stateFile: values.state
+            configFile: values.config,
+            token: values.token
         })
     } catch (e) {
         if (e instanceof SyncError) {

@@ -6,8 +6,8 @@
 .env
 
 # Local sync state (personal — never commit to this public repo)
-/exports-state.json
-/sync-config.json
+/discord-sync.json
+
 
 # Every other top-level directory is exported Discord data (canvas/, bases/,
 # whatever channel dirs you create) or generated renditions. Allowlist only

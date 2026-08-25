@@ -8,8 +8,8 @@
 
 import { parseArgs } from 'node:util'
 import { DiscordApi, resolveToken } from '../lib/discord-api'
-import { guildMark, loadConfig, MARK_GLYPH } from '../lib/sync-config'
-import { loadState } from '../lib/state'
+import { guildMark, MARK_GLYPH } from '../lib/sync-config'
+import { DEFAULT_CONFIG_PATH, loadDoc } from '../lib/state'
 
 export async function main(args: string[]): Promise<void> {
     const { values } = parseArgs({
@@ -17,8 +17,7 @@ export async function main(args: string[]): Promise<void> {
         options: {
             token: { type: 'string' },
             json: { type: 'boolean', default: false },
-            state: { type: 'string', default: 'exports-state.json' },
-            config: { type: 'string', default: 'sync-config.json' }
+            config: { type: 'string', default: DEFAULT_CONFIG_PATH }
         }
     })
     const token = await resolveToken(values.token)
@@ -27,12 +26,8 @@ export async function main(args: string[]): Promise<void> {
         process.exit(1)
     }
     const api = new DiscordApi(token)
-    const [guilds, state, config] = await Promise.all([
-        api.listGuilds(),
-        loadState(values.state),
-        loadConfig(values.config)
-    ])
-    const rows = guilds.map((g) => ({ ...g, mark: guildMark(state, config, g.id) }))
+    const [guilds, doc] = await Promise.all([api.listGuilds(), loadDoc(values.config)])
+    const rows = guilds.map((g) => ({ ...g, mark: guildMark(doc, g.id) }))
     if (values.json) {
         console.log(JSON.stringify(rows, null, 2))
         return
