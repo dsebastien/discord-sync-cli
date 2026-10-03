@@ -25,8 +25,11 @@ jobs:
             # Supply-chain gate. Gated at `high` on purpose: advisories come from
             # upstream, not from this repo, and a zero-tolerance gate means any new
             # low-severity advisory anywhere in the dev tree breaks unrelated PRs.
+            # GHSA-vfj7-8cjw-p6xm (braces <=3.0.3): no patched release exists. Only reached via
+            # commitizen > find-node-modules > findup-sync > micromatch at commit time, with
+            # patterns from this repo, never untrusted input. Drop the ignore once braces ships a fix.
             - name: Audit dependencies
-              run: bun audit --audit-level=high
+              run: bun audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm
 
             - name: Type check
               run: bun run tsc
